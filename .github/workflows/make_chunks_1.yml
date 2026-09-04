@@ -23,7 +23,7 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Download and Chunk File
+      - name: Download and Chunk File 1
         env:
           DOWNLOAD_URL: ${{ inputs.download_url }}
         run: |
