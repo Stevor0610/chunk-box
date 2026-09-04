@@ -1,4 +1,4 @@
-name: Download and Chunk File 1
+name: Download and Chunk File
 
 on:
   workflow_dispatch:
@@ -23,7 +23,7 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Download and Chunk File 1
+      - name: Download and Chunk File
         env:
           DOWNLOAD_URL: ${{ inputs.download_url }}
         run: |
@@ -32,12 +32,12 @@ jobs:
           import urllib.parse
           import os
           import re
+          import json
           import html
-          import time
 
-          url = os.environ['DOWNLOAD_URL']
-          target = 'downloaded_file.zip'
-          chunk_size = 50 * 1024 * 1024
+          # ============================================================
+          # URL Resolvers
+          # ============================================================
 
           def resolve_mediafire(url):
               print('Resolving MediaFire URL...')
@@ -45,147 +45,145 @@ jobs:
               req = urllib.request.Request(
                   url,
                   headers={
-                      'User-Agent': (
-                          'Mozilla/5.0 (X11; Linux x86_64) '
-                          'AppleWebKit/537.36 '
-                          '(KHTML, like Gecko) '
-                          'Chrome/131.0 Safari/537.36'
-                      )
+                      'User-Agent': 'Mozilla/5.0'
                   }
               )
 
-              with urllib.request.urlopen(req, timeout=30) as response:
-                  page = response.read().decode('utf-8', errors='replace')
+              with urllib.request.urlopen(req) as response:
+                  page = response.read().decode('utf-8', errors='ignore')
 
-              # Find the MediaFire download button
-              pattern = (
-                  r'<a[^>]+'
-                  r'href=[\"\\']([^\"\\']+)[\"\\'][^>]+'
-                  r'id=[\"\\']downloadButton[\"\\']'
+              # MediaFire downloadButton
+              patterns = [
+                  r'<a[^>]+id=[\"\\']downloadButton[\"\\'][^>]+href=[\"\\']([^\"\\']+)',
+                  r'<a[^>]+href=[\"\\']([^\"\\']+)[\"\\'][^>]+id=[\"\\']downloadButton[\"\\']'
+              ]
+
+              for pattern in patterns:
+                  match = re.search(pattern, page, re.IGNORECASE)
+                  if match:
+                      direct_url = html.unescape(match.group(1))
+                      print('MediaFire direct URL found.')
+                      return direct_url
+
+              raise RuntimeError(
+                  'Could not find MediaFire download URL.'
               )
 
-              match = re.search(pattern, page, re.IGNORECASE)
 
-              # Also support id appearing before href
-              if not match:
-                  pattern = (
-                      r'<a[^>]+'
-                      r'id=[\"\\']downloadButton[\"\\'][^>]+'
-                      r'href=[\"\\']([^\"\\']+)[\"\\']'
-                  )
-                  match = re.search(pattern, page, re.IGNORECASE)
+          def resolve_pcloud(url):
+              print('Resolving pCloud URL...')
 
-              if not match:
+              parsed = urllib.parse.urlparse(url)
+              query = urllib.parse.parse_qs(parsed.query)
+
+              code = query.get('code', [None])[0]
+
+              if not code:
                   raise RuntimeError(
-                      'Could not find MediaFire downloadButton. '
-                      'The page may have changed or blocked the request.'
+                      'Could not find pCloud public link code.'
                   )
 
-              direct_url = html.unescape(match.group(1))
+              print(f'pCloud code: {code}')
 
-              if not direct_url.startswith('http'):
-                  direct_url = urllib.parse.urljoin(url, direct_url)
+              # pCloud public-link API
+              api_url = (
+                  'https://api.pcloud.com/getpublinkdownload?'
+                  + urllib.parse.urlencode({
+                      'code': code,
+                      'forcedownload': 1
+                  })
+              )
 
-              print('Resolved direct URL:')
-              print(direct_url)
+              req = urllib.request.Request(
+                  api_url,
+                  headers={
+                      'User-Agent': 'Mozilla/5.0',
+                      'Referer': 'https://www.pcloud.com/'
+                  }
+              )
+
+              with urllib.request.urlopen(req) as response:
+                  data = json.loads(
+                      response.read().decode('utf-8')
+                  )
+
+              if data.get('result') != 0:
+                  raise RuntimeError(
+                      'pCloud API error: '
+                      + str(data)
+                  )
+
+              hosts = data.get('hosts')
+              path = data.get('path')
+
+              if not hosts or not path:
+                  raise RuntimeError(
+                      'pCloud API did not return a download URL.'
+                  )
+
+              direct_url = 'https://' + hosts[0] + path
+
+              print('pCloud direct URL found.')
+              print('Host:', hosts[0])
 
               return direct_url
 
-          # Resolve MediaFire share page.
-          # If the input is already a direct download URL,
-          # use it as-is.
-          if 'mediafire.com/file/' in url:
-              download_url = resolve_mediafire(url)
-          else:
-              download_url = url
 
-          # Download with a few retries.
-          for attempt in range(1, 4):
-              try:
-                  print(f'Downloading... attempt {attempt}/3')
+          def resolve_url(url):
+              print('Input URL:')
+              print(url)
 
-                  request = urllib.request.Request(
-                      download_url,
-                      headers={
-                          'User-Agent': (
-                              'Mozilla/5.0 (X11; Linux x86_64) '
-                              'AppleWebKit/537.36 '
-                              '(KHTML, like Gecko) '
-                              'Chrome/131.0 Safari/537.36'
-                          )
-                      }
-                  )
+              if 'mediafire.com/file/' in url:
+                  return resolve_mediafire(url)
 
-                  with urllib.request.urlopen(request, timeout=120) as response:
-                      total = response.headers.get('Content-Length')
+              if 'pcloud.link/' in url:
+                  return resolve_pcloud(url)
 
-                      if total:
-                          print(
-                              f'File size: '
-                              f'{int(total) / 1024 / 1024:.2f} MB'
-                          )
+              print('No resolver needed.')
+              return url
 
-                      with open(target, 'wb') as f:
-                          while True:
-                              data = response.read(1024 * 1024)
-                              if not data:
-                                  break
-                              f.write(data)
 
-                  print('Download completed.')
-                  break
+          # ============================================================
+          # Resolve URL
+          # ============================================================
 
-              except Exception as e:
-                  print(f'Download failed: {e}')
+          url = os.environ['DOWNLOAD_URL']
 
-                  if attempt == 3:
-                      raise
+          download_url = resolve_url(url)
 
-                  # MediaFire signed URL may have expired.
-                  # Resolve a fresh one before retrying.
-                  if 'mediafire.com/file/' in url:
-                      print('Resolving a fresh MediaFire URL...')
-                      download_url = resolve_mediafire(url)
+          print('Final download URL:')
+          print(download_url)
 
-                  time.sleep(3)
+
+          # ============================================================
+          # Original download + chunk logic
+          # ============================================================
+
+          target = 'downloaded_file.zip'
+          chunk_size = 50 * 1024 * 1024 # 50MB
+
+          print('Downloading...')
+          urllib.request.urlretrieve(download_url, target)
 
           print('Splitting into chunks...')
-
           part_num = 1
-
           with open(target, 'rb') as f:
               while True:
                   chunk_data = f.read(chunk_size)
-
                   if not chunk_data:
                       break
-
-                  chunk_name = f'chunk_part_{part_num}'
-
-                  with open(chunk_name, 'wb') as chunk_file:
+                  with open(f'chunk_part_{part_num}', 'wb') as chunk_file:
                       chunk_file.write(chunk_data)
-
-                  size_mb = os.path.getsize(chunk_name) / 1024 / 1024
-
-                  print(
-                      f'Created {chunk_name} '
-                      f'({size_mb:.2f} MB)'
-                  )
-
                   part_num += 1
 
-          os.remove(target)
-
-          print(f'Created {part_num - 1} chunks.')
+          if os.path.exists(target):
+              os.remove(target)
           "
 
       - name: Commit and Push Chunks to Repo
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-
           git add chunk_part_*
-
           git commit -m "add: compiler chunks"
-
           git push
