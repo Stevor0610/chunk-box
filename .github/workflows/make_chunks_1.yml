@@ -72,60 +72,36 @@ jobs:
 
           def resolve_pcloud(url):
               print('Resolving pCloud URL...')
-
-              parsed = urllib.parse.urlparse(url)
-              query = urllib.parse.parse_qs(parsed.query)
-
-              code = query.get('code', [None])[0]
-
-              if not code:
-                  raise RuntimeError(
-                      'Could not find pCloud public link code.'
-                  )
-
-              print(f'pCloud code: {code}')
-
-              # pCloud public-link API
-              api_url = (
-                  'https://api.pcloud.com/getpublinkdownload?'
-                  + urllib.parse.urlencode({
-                      'code': code,
-                      'forcedownload': 1
-                  })
-              )
-
+          
               req = urllib.request.Request(
-                  api_url,
+                  url,
                   headers={
-                      'User-Agent': 'Mozilla/5.0',
-                      'Referer': 'https://www.pcloud.com/'
+                      'User-Agent': 'Mozilla/5.0'
                   }
               )
-
+          
               with urllib.request.urlopen(req) as response:
-                  data = json.loads(
-                      response.read().decode('utf-8')
-                  )
-
-              if data.get('result') != 0:
+                  page = response.read().decode('utf-8', errors='ignore')
+          
+              # pCloud share page contains the actual download URL
+              match = re.search(
+                  r'"downloadlink"\s*:\s*"([^"]+)"',
+                  page
+              )
+          
+              if not match:
                   raise RuntimeError(
-                      'pCloud API error: '
-                      + str(data)
+                      'Could not find pCloud downloadlink in share page.'
                   )
-
-              hosts = data.get('hosts')
-              path = data.get('path')
-
-              if not hosts or not path:
-                  raise RuntimeError(
-                      'pCloud API did not return a download URL.'
-                  )
-
-              direct_url = 'https://' + hosts[0] + path
-
+          
+              direct_url = match.group(1)
+          
+              # HTML/JSON escaping
+              direct_url = direct_url.replace('\\/', '/')
+              direct_url = html.unescape(direct_url)
+          
               print('pCloud direct URL found.')
-              print('Host:', hosts[0])
-
+          
               return direct_url
 
 
