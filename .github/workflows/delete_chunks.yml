@@ -9,13 +9,13 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: Checkout Repository
+      - name: Checkout
         uses: actions/checkout@v4
-        with:
-          ref: main
           
-      - name: Delete Chunk Files
-        uses: test-room-7/action-delete-files@v2.0.0
-        with:
-          files: "gcc_part_* ccache_part_* chunk_part_* *b64.txt"
-          commit-message: "clean: remove all compiler chunk files"
+      - name: Delete and Push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git rm chunk_part_* || true
+          git commit -m "delete chunks" || exit 0
+          git push
