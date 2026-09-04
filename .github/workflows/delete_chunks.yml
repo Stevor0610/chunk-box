@@ -7,10 +7,12 @@ jobs:
   cleanup:
     runs-on: ubuntu-latest
     permissions:
-      contents: write  # Allows the action to delete files from your repository
+      contents: write
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Delete Chunk Files from Repo
         run: |
@@ -21,7 +23,8 @@ jobs:
 
           if [ -n "$(git status --porcelain)" ]; then
             git commit -m "clean: remove all compiler chunk files"
-            git push
+            git pull --rebase origin main
+            git push origin main
             echo "Successfully deleted chunks!"
           else
             echo "No chunk files were found to delete."
