@@ -1,0 +1,58 @@
+name: Download and Chunk File
+
+on:
+  workflow_dispatch:
+    inputs:
+      download_url:
+        description: 'Paste your download link here'
+        required: true
+        type: string
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # Allows the action to save chunks back to your repository
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Download and Chunk File
+        run: |
+          python -c "
+          import urllib.request
+          import os
+          url = '${{ github.event.inputs.download_url }}'
+          target = 'downloaded_file.zip'
+          chunk_size = 50 * 1024 * 1024 # 50MB
+
+          print('Downloading...')
+          urllib.request.urlretrieve(url, target)
+          
+          print('Splitting into chunks...')
+          part_num = 1
+          with open(target, 'rb') as f:
+              while True:
+                  chunk_data = f.read(chunk_size)
+                  if not chunk_data:
+                      break
+                  with open(f'chunk_part_{part_num}', 'wb') as chunk_file:
+                      chunk_file.write(chunk_data)
+                  part_num += 1
+          
+          if os.path.exists(target):
+              os.remove(target)
+          "
+
+      - name: Commit and Push Chunks to Repo
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add chunk_part_*
+          git commit -m "add: compiler chunks"
+          git push

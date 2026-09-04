@@ -1,0 +1,28 @@
+name: Delete Chunks
+
+on:
+  workflow_dispatch:
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # Allows the action to delete files from your repository
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Delete Chunk Files from Repo
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+          git rm -f gcc_part_* ccache_part_* chunk_part_* *b64.txt 2>/dev/null || true
+
+          if [ -n "$(git status --porcelain)" ]; then
+            git commit -m "clean: remove all compiler chunk files"
+            git push
+            echo "Successfully deleted chunks!"
+          else
+            echo "No chunk files were found to delete."
+          fi
