@@ -1,0 +1,281 @@
+name: Download and Chunk File
+
+on:
+  workflow_dispatch:
+    inputs:
+      download_url:
+        description: 'Paste your download link here'
+        required: true
+        type: string
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'
+
+      - name: Download and Chunk File
+        env:
+          DOWNLOAD_URL: ${{ inputs.download_url }}
+        run: |
+          python <<'PY'
+          import urllib.request
+          import os
+          import re
+          import html
+          import urllib.parse
+
+
+          # ============================================================
+          # MediaFire Resolver
+          # ============================================================
+
+          def resolve_mediafire(url):
+              print('Resolving MediaFire URL...')
+
+              req = urllib.request.Request(
+                  url,
+                  headers={
+                      'User-Agent': 'Mozilla/5.0'
+                  }
+              )
+
+              with urllib.request.urlopen(req) as response:
+                  page = response.read().decode(
+                      'utf-8',
+                      errors='ignore'
+                  )
+
+              patterns = [
+                  r'<a[^>]+id=["\']downloadButton["\'][^>]+href=["\']([^"\']+)',
+                  r'<a[^>]+href=["\']([^"\']+)["\'][^>]+id=["\']downloadButton["\']'
+              ]
+
+              for pattern in patterns:
+                  match = re.search(
+                      pattern,
+                      page,
+                      re.IGNORECASE
+                  )
+
+                  if match:
+                      direct_url = html.unescape(match.group(1))
+
+                      print('MediaFire direct URL found.')
+
+                      return direct_url
+
+              raise RuntimeError(
+                  'Could not find MediaFire download URL.'
+              )
+
+
+          # ============================================================
+          # pCloud Resolver
+          # ============================================================
+
+          def resolve_pcloud(url):
+              print('Resolving pCloud URL...')
+
+              req = urllib.request.Request(
+                  url,
+                  headers={
+                      'User-Agent': 'Mozilla/5.0'
+                  }
+              )
+
+              with urllib.request.urlopen(req) as response:
+                  page = response.read().decode(
+                      'utf-8',
+                      errors='ignore'
+                  )
+
+              match = re.search(
+                  r'"downloadlink"\s*:\s*"([^"]+)"',
+                  page
+              )
+
+              if not match:
+                  raise RuntimeError(
+                      'Could not find pCloud downloadlink.'
+                  )
+
+              direct_url = match.group(1)
+
+              direct_url = direct_url.replace(
+                  '\\/',
+                  '/'
+              )
+
+              direct_url = html.unescape(
+                  direct_url
+              )
+
+              print('pCloud direct URL found.')
+
+              return direct_url
+
+
+          # ============================================================
+          # Common URL Resolver
+          # ============================================================
+
+          def resolve_url(url):
+              print('Input URL:')
+              print(url)
+
+              if 'mediafire.com/file/' in url:
+                  return resolve_mediafire(url)
+
+              if 'pcloud.link/' in url:
+                  return resolve_pcloud(url)
+
+              print('No resolver needed.')
+
+              return url
+
+
+          # ============================================================
+          # Get Filename
+          # ============================================================
+
+          def get_filename(url, response=None):
+              # 1. Content-Disposition
+              if response:
+                  disposition = response.headers.get(
+                      'Content-Disposition',
+                      ''
+                  )
+
+                  match = re.search(
+                      r'filename\*?=(?:UTF-8\'\')?["\']?([^"\';]+)',
+                      disposition,
+                      re.IGNORECASE
+                  )
+
+                  if match:
+                      filename = urllib.parse.unquote(
+                          match.group(1)
+                      )
+
+                      if filename:
+                          return filename
+
+              # 2. URL filename
+              path = urllib.parse.urlparse(url).path
+
+              filename = os.path.basename(path)
+
+              if filename:
+                  filename = urllib.parse.unquote(filename)
+
+                  if filename:
+                      return filename
+
+              # 3. Fallback
+              return 'downloaded_file.zip'
+
+
+          # ============================================================
+          # Resolve Download URL
+          # ============================================================
+
+          url = os.environ['DOWNLOAD_URL']
+
+          download_url = resolve_url(url)
+
+          print('Final download URL:')
+          print(download_url)
+
+
+          # ============================================================
+          # Download
+          # ============================================================
+
+          chunk_size = 50 * 1024 * 1024
+
+          print('Downloading...')
+
+          req = urllib.request.Request(
+              download_url,
+              headers={
+                  'User-Agent': 'Mozilla/5.0'
+              }
+          )
+
+          with urllib.request.urlopen(req) as response:
+
+              filename = get_filename(
+                  download_url,
+                  response
+              )
+
+              print('Filename:')
+              print(filename)
+
+              folder = filename
+
+              os.makedirs(
+                  folder,
+                  exist_ok=True
+              )
+
+              print('Splitting into chunks...')
+
+              part_num = 1
+
+              while True:
+                  chunk_data = response.read(
+                      chunk_size
+                  )
+
+                  if not chunk_data:
+                      break
+
+                  chunk_path = os.path.join(
+                      folder,
+                      f'chunk_part_{part_num}'
+                  )
+
+                  with open(
+                      chunk_path,
+                      'wb'
+                  ) as chunk_file:
+
+                      chunk_file.write(
+                          chunk_data
+                      )
+
+                  print(
+                      f'Created {chunk_path}'
+                  )
+
+                  part_num += 1
+
+
+          print('Done.')
+          print(
+              f'Created {part_num - 1} chunk(s).'
+          )
+
+          PY
+
+      - name: Commit and Push Chunks to Repo
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add .
+
+          git commit -m "add: compiler chunks"
+
+          git push
