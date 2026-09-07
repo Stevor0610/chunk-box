@@ -33,6 +33,7 @@ jobs:
           import re
           import html
           import urllib.parse
+          import json
 
 
           # ============================================================
@@ -149,6 +150,7 @@ jobs:
           # ============================================================
 
           def get_filename(url, response=None):
+
               # 1. Content-Disposition
               if response:
                   disposition = response.headers.get(
@@ -198,7 +200,7 @@ jobs:
 
 
           # ============================================================
-          # Download
+          # Download + Chunk
           # ============================================================
 
           chunk_size = 50 * 1024 * 1024
@@ -224,16 +226,33 @@ jobs:
 
               folder = filename
 
+              # ========================================================
+              # Remove old chunks with same filename
+              # ========================================================
+
+              if os.path.exists(folder):
+                  print(
+                      f'Removing existing folder: {folder}'
+                  )
+
+                  import shutil
+                  shutil.rmtree(folder)
+
               os.makedirs(
                   folder,
                   exist_ok=True
               )
+
+              # ========================================================
+              # Split
+              # ========================================================
 
               print('Splitting into chunks...')
 
               part_num = 1
 
               while True:
+
                   chunk_data = response.read(
                       chunk_size
                   )
@@ -263,9 +282,56 @@ jobs:
 
 
           print('Done.')
+
           print(
               f'Created {part_num - 1} chunk(s).'
           )
+
+
+          # ============================================================
+          # Update files.json
+          # ============================================================
+
+          print('Updating files.json...')
+
+          files = []
+
+          for item in os.listdir('.'):
+
+              if not os.path.isdir(item):
+                  continue
+
+              chunk_path = os.path.join(
+                  item,
+                  'chunk_part_1'
+              )
+
+              if os.path.exists(chunk_path):
+                  files.append(item)
+
+
+          files.sort()
+
+          with open(
+              'files.json',
+              'w',
+              encoding='utf-8'
+          ) as f:
+
+              json.dump(
+                  files,
+                  f,
+                  ensure_ascii=False,
+                  indent=4
+              )
+
+          print('files.json updated.')
+
+          print(json.dumps(
+              files,
+              ensure_ascii=False,
+              indent=4
+          ))
 
           PY
 
