@@ -1,3 +1,4 @@
+```html
 <!DOCTYPE html>
 <html lang="zh-TW">
 <head>
@@ -6,36 +7,89 @@
 </head>
 <body>
 
+<select id="fileSelect"></select>
 <button id="download">下載 ZIP</button>
 
 <script>
-document.getElementById("download").onclick = async () => {
+const owner = "Stevor0610";
+const repo = "chunk-box";
+const branch = "main";
 
-    // 使用者設定
-    const owner = "Stevor0610";
-    const repo = "chunk-box";
-    const branch = "main";
-    const outputName = "LINEPortable.zip";
+const base =
+    `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/`;
 
-    const base = `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/`;
+const fileSelect = document.getElementById("fileSelect");
+const downloadButton = document.getElementById("download");
+
+
+// ============================================================
+// Load File List
+// ============================================================
+
+async function loadFiles() {
+
+    const r = await fetch(base + "files.json");
+
+    if (!r.ok) {
+        throw new Error("找不到 files.json");
+    }
+
+    const files = await r.json();
+
+    for (const file of files) {
+
+        const option = document.createElement("option");
+
+        option.value = file;
+        option.textContent = file;
+
+        fileSelect.appendChild(option);
+    }
+}
+
+
+// ============================================================
+// Download
+// ============================================================
+
+downloadButton.onclick = async () => {
+
+    const outputName = fileSelect.value;
+
+    if (!outputName) {
+        throw new Error("沒有選擇檔案");
+    }
+
+    const fileBase =
+        base + encodeURIComponent(outputName) + "/";
+
     const chunks = [];
 
     for (let i = 1; ; i++) {
-        const r = await fetch(base + `chunk_part_${i}`);
+
+        const r = await fetch(
+            fileBase + `chunk_part_${i}`
+        );
 
         if (!r.ok) break;
 
-        chunks.push(await r.arrayBuffer());
-        console.log(`chunk_part_${i} ✓`);
+        chunks.push(
+            await r.arrayBuffer()
+        );
+
+        console.log(
+            `${outputName}: chunk_part_${i} ✓`
+        );
     }
 
     if (!chunks.length) {
         throw new Error("找不到 chunks");
     }
 
-    const file = new Blob(chunks, {
-        type: "application/zip"
-    });
+    const file = new Blob(
+        chunks,
+        { type: "application/zip" }
+    );
 
     const a = document.createElement("a");
 
@@ -47,7 +101,18 @@ document.getElementById("download").onclick = async () => {
         `完成！ ${(file.size / 1024 / 1024).toFixed(2)} MB`
     );
 };
+
+
+// ============================================================
+// Start
+// ============================================================
+
+loadFiles().catch(error => {
+    console.error(error);
+    alert(error.message);
+});
 </script>
 
 </body>
 </html>
+```
