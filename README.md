@@ -1,4 +1,3 @@
-# chunk-box
 # Chunk Box
 
 A simple browser-based file downloader that downloads files in chunks and reconstructs them locally.
