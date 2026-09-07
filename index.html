@@ -1,118 +1,994 @@
-```html
 <!DOCTYPE html>
 <html lang="zh-TW">
 <head>
     <meta charset="UTF-8">
-    <title>Chunk Downloader</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>Chunk Box</title>
+
+    <style>
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            min-height: 100vh;
+
+            display: flex;
+            align-items: center;
+            justify-content: center;
+
+            font-family:
+                -apple-system,
+                BlinkMacSystemFont,
+                "Segoe UI",
+                "Noto Sans TC",
+                sans-serif;
+
+            background:
+                radial-gradient(
+                    circle at top,
+                    #1e293b 0%,
+                    #0f172a 45%,
+                    #020617 100%
+                );
+
+            color: #e5e7eb;
+        }
+
+
+        /* ============================================================
+           Main Card
+           ============================================================ */
+
+        .container {
+            width: min(92%, 560px);
+
+            padding: 38px;
+
+            border: 1px solid rgba(255, 255, 255, 0.08);
+
+            border-radius: 24px;
+
+            background: rgba(15, 23, 42, 0.82);
+
+            box-shadow:
+                0 25px 80px rgba(0, 0, 0, 0.45),
+                inset 0 1px 0 rgba(255, 255, 255, 0.04);
+
+            backdrop-filter: blur(18px);
+        }
+
+
+        /* ============================================================
+           Header
+           ============================================================ */
+
+        .logo {
+            width: 56px;
+            height: 56px;
+
+            display: flex;
+            align-items: center;
+            justify-content: center;
+
+            margin-bottom: 20px;
+
+            border-radius: 16px;
+
+            background: linear-gradient(
+                135deg,
+                #6366f1,
+                #8b5cf6
+            );
+
+            font-size: 27px;
+
+            box-shadow:
+                0 10px 30px rgba(99, 102, 241, 0.3);
+        }
+
+
+        h1 {
+            margin: 0;
+
+            font-size: 32px;
+            font-weight: 700;
+
+            letter-spacing: -0.8px;
+        }
+
+
+        .subtitle {
+            margin-top: 8px;
+            margin-bottom: 32px;
+
+            color: #94a3b8;
+
+            font-size: 15px;
+        }
+
+
+        /* ============================================================
+           File Selector
+           ============================================================ */
+
+        .label {
+            display: block;
+
+            margin-bottom: 9px;
+
+            color: #cbd5e1;
+
+            font-size: 14px;
+            font-weight: 600;
+        }
+
+
+        .select-wrapper {
+            position: relative;
+        }
+
+
+        select {
+            width: 100%;
+
+            padding: 15px 46px 15px 16px;
+
+            border: 1px solid #334155;
+
+            border-radius: 13px;
+
+            outline: none;
+
+            background: #111827;
+
+            color: #f8fafc;
+
+            font-size: 15px;
+
+            cursor: pointer;
+
+            appearance: none;
+
+            transition:
+                border-color 0.2s,
+                box-shadow 0.2s;
+        }
+
+
+        select:hover {
+            border-color: #475569;
+        }
+
+
+        select:focus {
+            border-color: #6366f1;
+
+            box-shadow:
+                0 0 0 3px rgba(99, 102, 241, 0.15);
+        }
+
+
+        .select-arrow {
+            position: absolute;
+
+            right: 17px;
+            top: 50%;
+
+            transform: translateY(-50%);
+
+            pointer-events: none;
+
+            color: #94a3b8;
+
+            font-size: 14px;
+        }
+
+
+        /* ============================================================
+           Download Button
+           ============================================================ */
+
+        button {
+            width: 100%;
+
+            margin-top: 18px;
+
+            padding: 15px;
+
+            border: none;
+
+            border-radius: 13px;
+
+            background: linear-gradient(
+                135deg,
+                #6366f1,
+                #7c3aed
+            );
+
+            color: white;
+
+            font-size: 16px;
+            font-weight: 650;
+
+            cursor: pointer;
+
+            box-shadow:
+                0 10px 25px rgba(99, 102, 241, 0.25);
+
+            transition:
+                transform 0.15s,
+                box-shadow 0.15s,
+                opacity 0.15s;
+        }
+
+
+        button:hover:not(:disabled) {
+            transform: translateY(-1px);
+
+            box-shadow:
+                0 14px 30px rgba(99, 102, 241, 0.35);
+        }
+
+
+        button:active:not(:disabled) {
+            transform: translateY(1px);
+        }
+
+
+        button:disabled {
+            opacity: 0.55;
+            cursor: not-allowed;
+        }
+
+
+        /* ============================================================
+           Status Area
+           ============================================================ */
+
+        .status {
+            margin-top: 28px;
+
+            padding: 18px;
+
+            border-radius: 15px;
+
+            background: rgba(2, 6, 23, 0.55);
+
+            border: 1px solid rgba(255, 255, 255, 0.06);
+        }
+
+
+        .status-header {
+            display: flex;
+
+            justify-content: space-between;
+            align-items: center;
+
+            margin-bottom: 13px;
+        }
+
+
+        .status-text {
+            font-size: 14px;
+            color: #cbd5e1;
+        }
+
+
+        .percentage {
+            font-size: 14px;
+            font-weight: 650;
+
+            color: #a5b4fc;
+        }
+
+
+        /* ============================================================
+           Progress Bar
+           ============================================================ */
+
+        .progress-container {
+            width: 100%;
+            height: 8px;
+
+            overflow: hidden;
+
+            border-radius: 999px;
+
+            background: #1e293b;
+        }
+
+
+        .progress {
+            width: 0%;
+            height: 100%;
+
+            border-radius: inherit;
+
+            background: linear-gradient(
+                90deg,
+                #6366f1,
+                #8b5cf6
+            );
+
+            transition: width 0.15s ease;
+        }
+
+
+        /* ============================================================
+           Information
+           ============================================================ */
+
+        .info {
+            display: flex;
+
+            justify-content: space-between;
+
+            margin-top: 13px;
+
+            color: #64748b;
+
+            font-size: 12px;
+        }
+
+
+        /* ============================================================
+           Empty / Error / Success
+           ============================================================ */
+
+        .message {
+            margin-top: 20px;
+
+            text-align: center;
+
+            color: #94a3b8;
+
+            font-size: 14px;
+        }
+
+
+        .success {
+            color: #86efac;
+        }
+
+
+        .error {
+            color: #fca5a5;
+        }
+
+
+        /* ============================================================
+           Footer
+           ============================================================ */
+
+        .footer {
+            margin-top: 28px;
+
+            text-align: center;
+
+            color: #475569;
+
+            font-size: 12px;
+        }
+
+
+        /* ============================================================
+           Mobile
+           ============================================================ */
+
+        @media (max-width: 600px) {
+
+            .container {
+                padding: 28px 22px;
+
+                border-radius: 20px;
+            }
+
+            h1 {
+                font-size: 28px;
+            }
+
+            .subtitle {
+                margin-bottom: 26px;
+            }
+
+        }
+
+    </style>
 </head>
+
+
 <body>
 
-<select id="fileSelect"></select>
-<button id="download">下載 ZIP</button>
+<div class="container">
+
+    <div class="logo">
+        ↓
+    </div>
+
+
+    <h1>Chunk Box</h1>
+
+    <div class="subtitle">
+        Select a file and download it directly to your device.
+    </div>
+
+
+    <!-- ============================================================
+         File Selection
+         ============================================================ -->
+
+    <label class="label" for="fileSelect">
+        Select file
+    </label>
+
+    <div class="select-wrapper">
+
+        <select id="fileSelect">
+            <option value="">
+                Loading files...
+            </option>
+        </select>
+
+        <span class="select-arrow">
+            ▼
+        </span>
+
+    </div>
+
+
+    <!-- ============================================================
+         Download Button
+         ============================================================ -->
+
+    <button id="download" disabled>
+        ↓ &nbsp; Download
+    </button>
+
+
+    <!-- ============================================================
+         Status
+         ============================================================ -->
+
+    <div class="status">
+
+        <div class="status-header">
+
+            <span
+                id="statusText"
+                class="status-text"
+            >
+                Ready
+            </span>
+
+            <span
+                id="percentage"
+                class="percentage"
+            >
+                0%
+            </span>
+
+        </div>
+
+
+        <div class="progress-container">
+
+            <div
+                id="progress"
+                class="progress"
+            ></div>
+
+        </div>
+
+
+        <div class="info">
+
+            <span id="chunkInfo">
+                0 / 0 chunks
+            </span>
+
+            <span id="sizeInfo">
+                0 MB
+            </span>
+
+        </div>
+
+    </div>
+
+
+    <div
+        id="message"
+        class="message"
+    ></div>
+
+
+    <div class="footer">
+        Chunk Box
+    </div>
+
+</div>
+
 
 <script>
-const owner = "Stevor0610";
-const repo = "chunk-box";
-const branch = "main";
 
-const base =
-    `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/`;
+    // ================================================================
+    // Configuration
+    // ================================================================
 
-const fileSelect = document.getElementById("fileSelect");
-const downloadButton = document.getElementById("download");
+    const owner = "Stevor0610";
 
+    const repo = "chunk-box";
 
-// ============================================================
-// Load File List
-// ============================================================
-
-async function loadFiles() {
-
-    const r = await fetch(base + "files.json");
-
-    if (!r.ok) {
-        throw new Error("找不到 files.json");
-    }
-
-    const files = await r.json();
-
-    for (const file of files) {
-
-        const option = document.createElement("option");
-
-        option.value = file;
-        option.textContent = file;
-
-        fileSelect.appendChild(option);
-    }
-}
+    const branch = "main";
 
 
-// ============================================================
-// Download
-// ============================================================
+    const base =
+        `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/`;
 
-downloadButton.onclick = async () => {
 
-    const outputName = fileSelect.value;
+    // ================================================================
+    // Elements
+    // ================================================================
 
-    if (!outputName) {
-        throw new Error("沒有選擇檔案");
-    }
+    const fileSelect =
+        document.getElementById("fileSelect");
 
-    const fileBase =
-        base + encodeURIComponent(outputName) + "/";
+    const downloadButton =
+        document.getElementById("download");
 
-    const chunks = [];
+    const statusText =
+        document.getElementById("statusText");
 
-    for (let i = 1; ; i++) {
+    const percentage =
+        document.getElementById("percentage");
 
-        const r = await fetch(
-            fileBase + `chunk_part_${i}`
+    const progress =
+        document.getElementById("progress");
+
+    const chunkInfo =
+        document.getElementById("chunkInfo");
+
+    const sizeInfo =
+        document.getElementById("sizeInfo");
+
+    const message =
+        document.getElementById("message");
+
+
+    // ================================================================
+    // State
+    // ================================================================
+
+    let files = [];
+
+
+    // ================================================================
+    // Format Size
+    // ================================================================
+
+    function formatSize(bytes) {
+
+        if (bytes < 1024 * 1024) {
+
+            return (
+                (bytes / 1024).toFixed(1)
+                + " KB"
+            );
+
+        }
+
+
+        if (bytes < 1024 * 1024 * 1024) {
+
+            return (
+                (bytes / 1024 / 1024).toFixed(2)
+                + " MB"
+            );
+
+        }
+
+
+        return (
+            (bytes / 1024 / 1024 / 1024).toFixed(2)
+            + " GB"
         );
-
-        if (!r.ok) break;
-
-        chunks.push(
-            await r.arrayBuffer()
-        );
-
-        console.log(
-            `${outputName}: chunk_part_${i} ✓`
-        );
     }
 
-    if (!chunks.length) {
-        throw new Error("找不到 chunks");
+
+    // ================================================================
+    // Reset Progress
+    // ================================================================
+
+    function resetProgress() {
+
+        progress.style.width = "0%";
+
+        percentage.textContent = "0%";
+
+        chunkInfo.textContent =
+            "0 / 0 chunks";
+
+        sizeInfo.textContent =
+            "0 MB";
+
+        statusText.textContent =
+            "Ready";
+
+        statusText.className =
+            "status-text";
+
+        message.textContent = "";
+
+        message.className =
+            "message";
     }
 
-    const file = new Blob(
-        chunks,
-        { type: "application/zip" }
-    );
 
-    const a = document.createElement("a");
+    // ================================================================
+    // Load File List
+    // ================================================================
 
-    a.href = URL.createObjectURL(file);
-    a.download = outputName;
-    a.click();
+    async function loadFiles() {
 
-    console.log(
-        `完成！ ${(file.size / 1024 / 1024).toFixed(2)} MB`
-    );
-};
+        try {
+
+            const response =
+                await fetch(
+                    base + "files.json?" + Date.now()
+                );
 
 
-// ============================================================
-// Start
-// ============================================================
+            if (!response.ok) {
 
-loadFiles().catch(error => {
-    console.error(error);
-    alert(error.message);
-});
+                throw new Error(
+                    "找不到 files.json"
+                );
+
+            }
+
+
+            files =
+                await response.json();
+
+
+            fileSelect.innerHTML = "";
+
+
+            if (!files.length) {
+
+                const option =
+                    document.createElement("option");
+
+                option.value = "";
+
+                option.textContent =
+                    "目前沒有可下載的檔案";
+
+                fileSelect.appendChild(option);
+
+                downloadButton.disabled = true;
+
+                return;
+            }
+
+
+            for (const file of files) {
+
+                const option =
+                    document.createElement("option");
+
+                option.value = file;
+
+                option.textContent = file;
+
+                fileSelect.appendChild(option);
+            }
+
+
+            downloadButton.disabled = false;
+
+
+        } catch (error) {
+
+            console.error(error);
+
+            fileSelect.innerHTML = "";
+
+            const option =
+                document.createElement("option");
+
+            option.textContent =
+                "無法載入檔案清單";
+
+            fileSelect.appendChild(option);
+
+            downloadButton.disabled = true;
+
+            message.textContent =
+                error.message;
+
+            message.className =
+                "message error";
+        }
+    }
+
+
+    // ================================================================
+    // Download
+    // ================================================================
+
+    downloadButton.onclick = async () => {
+
+        const outputName =
+            fileSelect.value;
+
+
+        if (!outputName) {
+
+            return;
+        }
+
+
+        downloadButton.disabled = true;
+
+        fileSelect.disabled = true;
+
+        resetProgress();
+
+
+        try {
+
+            statusText.textContent =
+                "Finding chunks...";
+
+
+            // --------------------------------------------------------
+            // Folder
+            // --------------------------------------------------------
+
+            const fileBase =
+                base
+                + encodeURIComponent(outputName)
+                + "/";
+
+
+            const chunks = [];
+
+            let totalSize = 0;
+
+            let chunkCount = 0;
+
+
+            // --------------------------------------------------------
+            // Download chunks
+            // --------------------------------------------------------
+
+            for (
+                let i = 1;
+                ;
+                i++
+            ) {
+
+                const response =
+                    await fetch(
+                        fileBase
+                        + `chunk_part_${i}`
+                    );
+
+
+                if (!response.ok) {
+
+                    break;
+                }
+
+
+                const data =
+                    await response.arrayBuffer();
+
+
+                chunks.push(data);
+
+
+                totalSize += data.byteLength;
+
+                chunkCount++;
+
+
+                statusText.textContent =
+                    "Downloading...";
+
+
+                chunkInfo.textContent =
+                    `${chunkCount} chunks`;
+
+
+                sizeInfo.textContent =
+                    formatSize(totalSize);
+
+
+                /*
+                 * Progress is shown as an activity indicator while
+                 * the total number of chunks is unknown.
+                 *
+                 * Once chunk_part_N fails, we know the total count.
+                 */
+
+                progress.style.width =
+                    `${Math.min(
+                        90,
+                        10 + chunkCount * 3
+                    )}%`;
+
+
+                console.log(
+                    `${outputName}: chunk_part_${i} ✓`
+                );
+            }
+
+
+            // --------------------------------------------------------
+            // Check
+            // --------------------------------------------------------
+
+            if (!chunks.length) {
+
+                throw new Error(
+                    "找不到 chunks"
+                );
+            }
+
+
+            // --------------------------------------------------------
+            // Known total
+            // --------------------------------------------------------
+
+            const totalChunks =
+                chunks.length;
+
+
+            chunkInfo.textContent =
+                `${totalChunks} / ${totalChunks} chunks`;
+
+            sizeInfo.textContent =
+                formatSize(totalSize);
+
+
+            percentage.textContent =
+                "100%";
+
+
+            progress.style.width =
+                "100%";
+
+
+            statusText.textContent =
+                "Reconstructing file...";
+
+
+            // --------------------------------------------------------
+            // Create Blob
+            // --------------------------------------------------------
+
+            const file =
+                new Blob(
+                    chunks,
+                    {
+                        type:
+                            "application/octet-stream"
+                    }
+                );
+
+
+            // --------------------------------------------------------
+            // Download
+            // --------------------------------------------------------
+
+            const url =
+                URL.createObjectURL(file);
+
+
+            const a =
+                document.createElement("a");
+
+
+            a.href = url;
+
+            a.download = outputName;
+
+            document.body.appendChild(a);
+
+            a.click();
+
+            a.remove();
+
+
+            setTimeout(() => {
+
+                URL.revokeObjectURL(url);
+
+            }, 1000);
+
+
+            // --------------------------------------------------------
+            // Finished
+            // --------------------------------------------------------
+
+            statusText.textContent =
+                "Download completed";
+
+            statusText.className =
+                "status-text success";
+
+
+            message.textContent =
+                `${outputName} 已準備完成`;
+
+            message.className =
+                "message success";
+
+
+            console.log(
+                `完成！ ${formatSize(file.size)}`
+            );
+
+
+        } catch (error) {
+
+            console.error(error);
+
+
+            statusText.textContent =
+                "Download failed";
+
+            statusText.className =
+                "status-text error";
+
+
+            message.textContent =
+                error.message;
+
+            message.className =
+                "message error";
+
+
+            progress.style.width =
+                "0%";
+
+            percentage.textContent =
+                "0%";
+
+
+        } finally {
+
+            downloadButton.disabled =
+                false;
+
+            fileSelect.disabled =
+                false;
+        }
+    };
+
+
+    // ================================================================
+    // Selection Changed
+    // ================================================================
+
+    fileSelect.onchange = () => {
+
+        resetProgress();
+    };
+
+
+    // ================================================================
+    // Start
+    // ================================================================
+
+    loadFiles();
+
 </script>
 
 </body>
 </html>
-```
