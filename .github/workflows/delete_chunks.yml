@@ -35,65 +35,88 @@ jobs:
           import os
           import shutil
           import json
+          import re
+
 
           action = os.environ["ACTION"]
+
           filename = os.environ["FILENAME"].strip()
 
-          # ==========================================
+
+          # ============================================================
           # Remove All
-          # ==========================================
+          # ============================================================
 
           if action == "remove_all":
 
               print("Removing all chunk folders...")
 
+
               for item in os.listdir("."):
 
                   if not os.path.isdir(item):
+
                       continue
+
 
                   chunk = os.path.join(
                       item,
                       "chunk_part_1"
                   )
 
+
                   if os.path.exists(chunk):
 
-                      print(f"Deleting: {item}")
+                      print(
+                          f"Deleting: {item}"
+                      )
 
                       shutil.rmtree(item)
 
-          # ==========================================
+
+          # ============================================================
           # Remove One
-          # ==========================================
+          # ============================================================
 
           elif action == "remove_one":
 
               if not filename:
+
                   raise RuntimeError(
                       "Filename is required."
                   )
 
+
               folder = filename
 
+
               if not os.path.isdir(folder):
+
                   raise RuntimeError(
                       f"File not found: {filename}"
                   )
+
 
               chunk = os.path.join(
                   folder,
                   "chunk_part_1"
               )
 
+
               if not os.path.exists(chunk):
+
                   raise RuntimeError(
                       f"{filename} is not a chunk folder."
                   )
 
-              print(f"Deleting: {folder}")
+
+              print(
+                  f"Deleting: {folder}"
+              )
+
 
               shutil.rmtree(folder)
+
 
           else:
 
@@ -101,26 +124,99 @@ jobs:
                   f"Unknown action: {action}"
               )
 
-          # ==========================================
+
+          # ============================================================
           # Rebuild files.json
-          # ==========================================
+          # ============================================================
+
+          print("Updating files.json...")
+
 
           files = []
+
 
           for item in os.listdir("."):
 
               if not os.path.isdir(item):
+
                   continue
+
 
               chunk = os.path.join(
                   item,
                   "chunk_part_1"
               )
 
-              if os.path.exists(chunk):
-                  files.append(item)
 
-          files.sort()
+              if not os.path.exists(chunk):
+
+                  continue
+
+
+              chunk_numbers = []
+
+              total_size = 0
+
+
+              for chunk_name in os.listdir(item):
+
+                  if not chunk_name.startswith(
+                      "chunk_part_"
+                  ):
+
+                      continue
+
+
+                  chunk_path = os.path.join(
+                      item,
+                      chunk_name
+                  )
+
+
+                  if not os.path.isfile(
+                      chunk_path
+                  ):
+
+                      continue
+
+
+                  match = re.match(
+                      r"chunk_part_(\d+)$",
+                      chunk_name
+                  )
+
+
+                  if not match:
+
+                      continue
+
+
+                  chunk_numbers.append(
+                      int(match.group(1))
+                  )
+
+
+                  total_size += os.path.getsize(
+                      chunk_path
+                  )
+
+
+              if not chunk_numbers:
+
+                  continue
+
+
+              files.append({
+                  "name": item,
+                  "size": total_size,
+                  "chunks": len(chunk_numbers)
+              })
+
+
+          files.sort(
+              key=lambda x: x["name"].lower()
+          )
+
 
           with open(
               "files.json",
@@ -135,7 +231,6 @@ jobs:
                   indent=4
               )
 
-          print("files.json updated:")
 
           print(
               json.dumps(
@@ -154,6 +249,11 @@ jobs:
 
           git add .
 
-          git commit -m "remove: chunks" || exit 0
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+            exit 0
+          fi
+
+          git commit -m "remove: chunks"
 
           git push
