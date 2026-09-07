@@ -12,7 +12,7 @@ on:
           - remove_one
 
       filename:
-        description: "Filename to remove (only used for remove_one)"
+        description: "Filename to remove (example: LINEPortable.zip)"
         required: false
         type: string
 
@@ -39,9 +39,9 @@ jobs:
           action = os.environ["ACTION"]
           filename = os.environ["FILENAME"].strip()
 
-          # ============================================================
+          # ==========================================
           # Remove All
-          # ============================================================
+          # ==========================================
 
           if action == "remove_all":
 
@@ -63,22 +63,20 @@ jobs:
 
                       shutil.rmtree(item)
 
-
-          # ============================================================
+          # ==========================================
           # Remove One
-          # ============================================================
+          # ==========================================
 
           elif action == "remove_one":
 
               if not filename:
                   raise RuntimeError(
-                      "Filename is required for remove_one."
+                      "Filename is required."
                   )
 
               folder = filename
 
               if not os.path.isdir(folder):
-
                   raise RuntimeError(
                       f"File not found: {filename}"
                   )
@@ -89,15 +87,13 @@ jobs:
               )
 
               if not os.path.exists(chunk):
-
                   raise RuntimeError(
-                      f"Not a chunk folder: {filename}"
+                      f"{filename} is not a chunk folder."
                   )
 
               print(f"Deleting: {folder}")
 
               shutil.rmtree(folder)
-
 
           else:
 
@@ -105,12 +101,9 @@ jobs:
                   f"Unknown action: {action}"
               )
 
-
-          # ============================================================
-          # Update files.json
-          # ============================================================
-
-          print("Updating files.json...")
+          # ==========================================
+          # Rebuild files.json
+          # ==========================================
 
           files = []
 
@@ -142,7 +135,7 @@ jobs:
                   indent=4
               )
 
-          print("Current files:")
+          print("files.json updated:")
 
           print(
               json.dumps(
