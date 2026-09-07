@@ -34,6 +34,7 @@ jobs:
           import html
           import urllib.parse
           import json
+          import shutil
 
 
           # ============================================================
@@ -41,6 +42,7 @@ jobs:
           # ============================================================
 
           def resolve_mediafire(url):
+
               print('Resolving MediaFire URL...')
 
               req = urllib.request.Request(
@@ -51,6 +53,7 @@ jobs:
               )
 
               with urllib.request.urlopen(req) as response:
+
                   page = response.read().decode(
                       'utf-8',
                       errors='ignore'
@@ -62,6 +65,7 @@ jobs:
               ]
 
               for pattern in patterns:
+
                   match = re.search(
                       pattern,
                       page,
@@ -69,7 +73,10 @@ jobs:
                   )
 
                   if match:
-                      direct_url = html.unescape(match.group(1))
+
+                      direct_url = html.unescape(
+                          match.group(1)
+                      )
 
                       print('MediaFire direct URL found.')
 
@@ -85,6 +92,7 @@ jobs:
           # ============================================================
 
           def resolve_pcloud(url):
+
               print('Resolving pCloud URL...')
 
               req = urllib.request.Request(
@@ -95,6 +103,7 @@ jobs:
               )
 
               with urllib.request.urlopen(req) as response:
+
                   page = response.read().decode(
                       'utf-8',
                       errors='ignore'
@@ -106,6 +115,7 @@ jobs:
               )
 
               if not match:
+
                   raise RuntimeError(
                       'Could not find pCloud downloadlink.'
                   )
@@ -131,13 +141,16 @@ jobs:
           # ============================================================
 
           def resolve_url(url):
+
               print('Input URL:')
               print(url)
 
               if 'mediafire.com/file/' in url:
+
                   return resolve_mediafire(url)
 
               if 'pcloud.link/' in url:
+
                   return resolve_pcloud(url)
 
               print('No resolver needed.')
@@ -153,6 +166,7 @@ jobs:
 
               # 1. Content-Disposition
               if response:
+
                   disposition = response.headers.get(
                       'Content-Disposition',
                       ''
@@ -165,30 +179,42 @@ jobs:
                   )
 
                   if match:
+
                       filename = urllib.parse.unquote(
                           match.group(1)
                       )
 
                       if filename:
+
                           return filename
 
-              # 2. URL filename
-              path = urllib.parse.urlparse(url).path
 
-              filename = os.path.basename(path)
+              # 2. URL filename
+              path = urllib.parse.urlparse(
+                  url
+              ).path
+
+              filename = os.path.basename(
+                  path
+              )
 
               if filename:
-                  filename = urllib.parse.unquote(filename)
+
+                  filename = urllib.parse.unquote(
+                      filename
+                  )
 
                   if filename:
+
                       return filename
+
 
               # 3. Fallback
               return 'downloaded_file.zip'
 
 
           # ============================================================
-          # Resolve Download URL
+          # Resolve URL
           # ============================================================
 
           url = os.environ['DOWNLOAD_URL']
@@ -226,22 +252,25 @@ jobs:
 
               folder = filename
 
+
               # ========================================================
-              # Remove old chunks with same filename
+              # Remove old chunks
               # ========================================================
 
               if os.path.exists(folder):
+
                   print(
                       f'Removing existing folder: {folder}'
                   )
 
-                  import shutil
                   shutil.rmtree(folder)
+
 
               os.makedirs(
                   folder,
                   exist_ok=True
               )
+
 
               # ========================================================
               # Split
@@ -251,6 +280,9 @@ jobs:
 
               part_num = 1
 
+              total_size = 0
+
+
               while True:
 
                   chunk_data = response.read(
@@ -258,12 +290,15 @@ jobs:
                   )
 
                   if not chunk_data:
+
                       break
+
 
                   chunk_path = os.path.join(
                       folder,
                       f'chunk_part_{part_num}'
                   )
+
 
                   with open(
                       chunk_path,
@@ -274,17 +309,32 @@ jobs:
                           chunk_data
                       )
 
-                  print(
-                      f'Created {chunk_path}'
+
+                  total_size += len(
+                      chunk_data
                   )
 
+
+                  print(
+                      f'Created {chunk_path} '
+                      f'({len(chunk_data)} bytes)'
+                  )
+
+
                   part_num += 1
+
+
+          total_chunks = part_num - 1
 
 
           print('Done.')
 
           print(
-              f'Created {part_num - 1} chunk(s).'
+              f'Total size: {total_size} bytes'
+          )
+
+          print(
+              f'Total chunks: {total_chunks}'
           )
 
 
@@ -296,21 +346,101 @@ jobs:
 
           files = []
 
+
           for item in os.listdir('.'):
 
               if not os.path.isdir(item):
+
                   continue
+
 
               chunk_path = os.path.join(
                   item,
                   'chunk_part_1'
               )
 
-              if os.path.exists(chunk_path):
-                  files.append(item)
+
+              if not os.path.exists(chunk_path):
+
+                  continue
 
 
-          files.sort()
+              # --------------------------------------------------------
+              # Calculate metadata
+              # --------------------------------------------------------
+
+              chunks = []
+
+              total_file_size = 0
+
+
+              for chunk_name in os.listdir(item):
+
+                  if not chunk_name.startswith(
+                      'chunk_part_'
+                  ):
+
+                      continue
+
+
+                  chunk_path = os.path.join(
+                      item,
+                      chunk_name
+                  )
+
+
+                  if not os.path.isfile(
+                      chunk_path
+                  ):
+
+                      continue
+
+
+                  match = re.match(
+                      r'chunk_part_(\d+)$',
+                      chunk_name
+                  )
+
+
+                  if not match:
+
+                      continue
+
+
+                  number = int(
+                      match.group(1)
+                  )
+
+
+                  chunks.append(
+                      number
+                  )
+
+
+                  total_file_size += os.path.getsize(
+                      chunk_path
+                  )
+
+
+              if not chunks:
+
+                  continue
+
+
+              chunks.sort()
+
+
+              files.append({
+                  'name': item,
+                  'size': total_file_size,
+                  'chunks': len(chunks)
+              })
+
+
+          files.sort(
+              key=lambda x: x['name'].lower()
+          )
+
 
           with open(
               'files.json',
@@ -325,22 +455,30 @@ jobs:
                   indent=4
               )
 
+
           print('files.json updated.')
 
-          print(json.dumps(
-              files,
-              ensure_ascii=False,
-              indent=4
-          ))
+          print(
+              json.dumps(
+                  files,
+                  ensure_ascii=False,
+                  indent=4
+              )
+          )
 
           PY
 
       - name: Commit and Push Chunks to Repo
         run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
 
           git add .
+
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+            exit 0
+          fi
 
           git commit -m "add: compiler chunks"
 
