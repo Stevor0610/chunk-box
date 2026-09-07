@@ -1,21 +1,166 @@
-name: Delete Chunks
+name: Remove Chunks
 
 on:
   workflow_dispatch:
+    inputs:
+      action:
+        description: "Choose what to remove"
+        required: true
+        type: choice
+        options:
+          - remove_all
+          - remove_one
+
+      filename:
+        description: "Filename to remove (only used for remove_one)"
+        required: false
+        type: string
 
 jobs:
   cleanup:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+
     steps:
       - name: Checkout
         uses: actions/checkout@v5
-          
-      - name: Delete and Push
+
+      - name: Remove Chunks
+        env:
+          ACTION: ${{ inputs.action }}
+          FILENAME: ${{ inputs.filename }}
+        run: |
+          python <<'PY'
+          import os
+          import shutil
+          import json
+
+          action = os.environ["ACTION"]
+          filename = os.environ["FILENAME"].strip()
+
+          # ============================================================
+          # Remove All
+          # ============================================================
+
+          if action == "remove_all":
+
+              print("Removing all chunk folders...")
+
+              for item in os.listdir("."):
+
+                  if not os.path.isdir(item):
+                      continue
+
+                  chunk = os.path.join(
+                      item,
+                      "chunk_part_1"
+                  )
+
+                  if os.path.exists(chunk):
+
+                      print(f"Deleting: {item}")
+
+                      shutil.rmtree(item)
+
+
+          # ============================================================
+          # Remove One
+          # ============================================================
+
+          elif action == "remove_one":
+
+              if not filename:
+                  raise RuntimeError(
+                      "Filename is required for remove_one."
+                  )
+
+              folder = filename
+
+              if not os.path.isdir(folder):
+
+                  raise RuntimeError(
+                      f"File not found: {filename}"
+                  )
+
+              chunk = os.path.join(
+                  folder,
+                  "chunk_part_1"
+              )
+
+              if not os.path.exists(chunk):
+
+                  raise RuntimeError(
+                      f"Not a chunk folder: {filename}"
+                  )
+
+              print(f"Deleting: {folder}")
+
+              shutil.rmtree(folder)
+
+
+          else:
+
+              raise RuntimeError(
+                  f"Unknown action: {action}"
+              )
+
+
+          # ============================================================
+          # Update files.json
+          # ============================================================
+
+          print("Updating files.json...")
+
+          files = []
+
+          for item in os.listdir("."):
+
+              if not os.path.isdir(item):
+                  continue
+
+              chunk = os.path.join(
+                  item,
+                  "chunk_part_1"
+              )
+
+              if os.path.exists(chunk):
+                  files.append(item)
+
+          files.sort()
+
+          with open(
+              "files.json",
+              "w",
+              encoding="utf-8"
+          ) as f:
+
+              json.dump(
+                  files,
+                  f,
+                  ensure_ascii=False,
+                  indent=4
+              )
+
+          print("Current files:")
+
+          print(
+              json.dumps(
+                  files,
+                  ensure_ascii=False,
+                  indent=4
+              )
+          )
+
+          PY
+
+      - name: Commit and Push
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git rm chunk_part_* || true
-          git commit -m "delete chunks" || exit 0
+
+          git add .
+
+          git commit -m "remove: chunks" || exit 0
+
           git push
