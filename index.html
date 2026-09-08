@@ -537,7 +537,7 @@
 
 
 <script>
-    
+
 const owner = "Stevor0610";
 const repo = "chunk-box";
 const branch = "main";
@@ -577,6 +577,17 @@ const message =
 
 let files = [];
 
+
+/* ============================================================
+   Configuration
+============================================================ */
+
+const MAX_CONNECTIONS = 4;
+
+
+/* ============================================================
+   Utility
+============================================================ */
 
 function formatSize(bytes) {
 
@@ -623,6 +634,37 @@ function resetProgress() {
 }
 
 
+function updateProgress(
+    downloadedSize,
+    totalSize,
+    completedChunks,
+    totalChunks
+) {
+
+    const percent =
+        Math.min(
+            100,
+            Math.round(
+                downloadedSize
+                / totalSize
+                * 100
+            )
+        );
+
+    progress.style.width =
+        `${percent}%`;
+
+    percentage.textContent =
+        `${percent}%`;
+
+    chunkInfo.textContent =
+        `${completedChunks} / ${totalChunks} chunks`;
+
+    sizeInfo.textContent =
+        `${formatSize(downloadedSize)} / ${formatSize(totalSize)}`;
+}
+
+
 function updateFileInfo() {
 
     const selected =
@@ -647,6 +689,10 @@ function updateFileInfo() {
         `${selected.chunks} chunks`;
 }
 
+
+/* ============================================================
+   Load file list
+============================================================ */
 
 async function loadFiles() {
 
@@ -752,15 +798,555 @@ async function loadFiles() {
 }
 
 
+/* ============================================================
+   Download one chunk with real byte progress
+============================================================ */
+
+async function downloadChunk(
+    fileBase,
+    index,
+    onBytes
+) {
+
+    const response =
+        await fetch(
+            fileBase
+            + `chunk_part_${index}`,
+            {
+                cache: "no-store"
+            }
+        );
+
+    if (!response.ok) {
+
+        throw new Error(
+            `找不到 chunk_part_${index}`
+        );
+    }
+
+
+    /*
+     * Read the response stream ourselves instead of using
+     * response.arrayBuffer(), so progress is updated while
+     * the chunk is actually downloading.
+     */
+
+    if (!response.body) {
+
+        const data =
+            await response.arrayBuffer();
+
+        onBytes(data.byteLength);
+
+        return data;
+    }
+
+
+    const reader =
+        response.body.getReader();
+
+    const parts = [];
+
+    let total = 0;
+
+
+    try {
+
+        while (true) {
+
+            const {
+                done,
+                value
+            } = await reader.read();
+
+
+            if (done) {
+                break;
+            }
+
+
+            parts.push(value);
+
+            total += value.byteLength;
+
+            onBytes(value.byteLength);
+        }
+
+    }
+    catch (error) {
+
+        try {
+            await reader.cancel();
+        }
+        catch (_) {
+        }
+
+        throw error;
+    }
+
+
+    const result =
+        new Uint8Array(total);
+
+    let offset = 0;
+
+
+    for (const part of parts) {
+
+        result.set(
+            part,
+            offset
+        );
+
+        offset += part.byteLength;
+    }
+
+
+    return result.buffer;
+}
+
+
+/* ============================================================
+   Parallel chunk downloader
+============================================================ */
+
+async function downloadChunks(
+    fileBase,
+    totalChunks,
+    onBytes,
+    onChunkComplete
+) {
+
+    const results =
+        new Array(totalChunks + 1);
+
+    let nextChunk = 1;
+
+
+    async function worker() {
+
+        while (true) {
+
+            const index = nextChunk++;
+
+
+            if (index > totalChunks) {
+                return;
+            }
+
+
+            statusText.textContent =
+                `Downloading chunk ${index}...`;
+
+
+            const data =
+                await downloadChunk(
+                    fileBase,
+                    index,
+                    onBytes
+                );
+
+
+            results[index] =
+                data;
+
+
+            onChunkComplete(
+                index
+            );
+        }
+    }
+
+
+    const workerCount =
+        Math.min(
+            MAX_CONNECTIONS,
+            totalChunks
+        );
+
+
+    const workers = [];
+
+
+    for (
+        let i = 0;
+        i < workerCount;
+        i++
+    ) {
+
+        workers.push(
+            worker()
+        );
+    }
+
+
+    await Promise.all(
+        workers
+    );
+
+
+    return results;
+}
+
+
+/* ============================================================
+   File System Access API
+============================================================ */
+
+async function streamingDownload(
+    outputName,
+    fileBase,
+    totalChunks,
+    totalSize
+) {
+
+    /*
+     * File System Access API is currently supported by
+     * Chromium-based browsers such as Edge and Chrome.
+     *
+     * The user chooses the destination once.
+     */
+
+    if (
+        typeof window.showSaveFilePicker !==
+        "function"
+    ) {
+
+        return false;
+    }
+
+
+    statusText.textContent =
+        "Choose save location...";
+
+
+    const handle =
+        await window.showSaveFilePicker(
+            {
+                suggestedName: outputName
+            }
+        );
+
+
+    const writable =
+        await handle.createWritable();
+
+
+    /*
+     * Chunks may finish out of order.
+     *
+     * Example:
+     *
+     *     chunk 3 finishes
+     *     chunk 2 finishes
+     *     chunk 1 finishes
+     *
+     * We cannot write 3 before 1 and 2.
+     *
+     * Therefore completed chunks are temporarily kept in
+     * "pending" until all previous chunks have been written.
+     */
+
+    const pending =
+        new Map();
+
+
+    let nextToWrite = 1;
+
+    let nextChunk = 1;
+
+    let downloadedSize = 0;
+
+    let completedChunks = 0;
+
+
+    async function worker() {
+
+        while (true) {
+
+            const index = nextChunk++;
+
+
+            if (index > totalChunks) {
+                return;
+            }
+
+
+            statusText.textContent =
+                `Downloading chunk ${index}...`;
+
+
+            const data =
+                await downloadChunk(
+                    fileBase,
+                    index,
+
+                    byteCount => {
+
+                        downloadedSize +=
+                            byteCount;
+
+                        updateProgress(
+                            downloadedSize,
+                            totalSize,
+                            completedChunks,
+                            totalChunks
+                        );
+                    }
+                );
+
+
+            completedChunks++;
+
+
+            updateProgress(
+                downloadedSize,
+                totalSize,
+                completedChunks,
+                totalChunks
+            );
+
+
+            pending.set(
+                index,
+                data
+            );
+
+
+            /*
+             * Write every consecutive chunk that is now available.
+             */
+
+            while (
+                pending.has(nextToWrite)
+            ) {
+
+                const chunk =
+                    pending.get(
+                        nextToWrite
+                    );
+
+
+                pending.delete(
+                    nextToWrite
+                );
+
+
+                statusText.textContent =
+                    `Writing chunk ${nextToWrite}...`;
+
+
+                await writable.write(
+                    chunk
+                );
+
+
+                nextToWrite++;
+            }
+        }
+    }
+
+
+    try {
+
+        const workerCount =
+            Math.min(
+                MAX_CONNECTIONS,
+                totalChunks
+            );
+
+
+        const workers = [];
+
+
+        for (
+            let i = 0;
+            i < workerCount;
+            i++
+        ) {
+
+            workers.push(
+                worker()
+            );
+        }
+
+
+        await Promise.all(
+            workers
+        );
+
+
+        /*
+         * Every chunk must have been written.
+         */
+
+        if (
+            nextToWrite !==
+            totalChunks + 1
+        ) {
+
+            throw new Error(
+                "部分 chunk 尚未寫入檔案。"
+            );
+        }
+
+
+        statusText.textContent =
+            "Finalizing file...";
+
+
+        await writable.close();
+
+
+        return true;
+
+    }
+    catch (error) {
+
+        try {
+            await writable.abort();
+        }
+        catch (_) {
+        }
+
+        throw error;
+    }
+}
+
+
+/* ============================================================
+   Blob fallback
+============================================================ */
+
+async function blobDownload(
+    outputName,
+    fileBase,
+    totalChunks,
+    totalSize
+) {
+
+    /*
+     * This fallback is used by browsers without
+     * File System Access API.
+     *
+     * It still uses 4 parallel connections and
+     * real byte-based progress.
+     */
+
+    const chunks =
+        new Array(totalChunks + 1);
+
+
+    let downloadedSize = 0;
+
+    let completedChunks = 0;
+
+
+    const results =
+        await downloadChunks(
+            fileBase,
+            totalChunks,
+
+            byteCount => {
+
+                downloadedSize +=
+                    byteCount;
+
+
+                updateProgress(
+                    downloadedSize,
+                    totalSize,
+                    completedChunks,
+                    totalChunks
+                );
+            },
+
+            index => {
+
+                completedChunks++;
+
+
+                updateProgress(
+                    downloadedSize,
+                    totalSize,
+                    completedChunks,
+                    totalChunks
+                );
+            }
+        );
+
+
+    for (
+        let i = 1;
+        i <= totalChunks;
+        i++
+    ) {
+
+        chunks[i] =
+            results[i];
+    }
+
+
+    statusText.textContent =
+        "Reconstructing file...";
+
+
+    const file =
+        new Blob(
+            chunks.slice(1),
+            {
+                type:
+                    "application/octet-stream"
+            }
+        );
+
+
+    const url =
+        URL.createObjectURL(
+            file
+        );
+
+
+    const a =
+        document.createElement("a");
+
+
+    a.href = url;
+
+    a.download = outputName;
+
+
+    document.body.appendChild(a);
+
+    a.click();
+
+    a.remove();
+
+
+    setTimeout(
+        () => {
+            URL.revokeObjectURL(url);
+        },
+        1000
+    );
+}
+
+
+/* ============================================================
+   Main download
+============================================================ */
+
 downloadButton.onclick =
     async () => {
 
         const outputName =
             fileSelect.value;
 
+
         if (!outputName) {
             return;
         }
+
 
         const selected =
             files.find(
@@ -768,15 +1354,21 @@ downloadButton.onclick =
                     file.name === outputName
             );
 
+
         if (!selected) {
             return;
         }
 
-        downloadButton.disabled = true;
 
-        fileSelect.disabled = true;
+        downloadButton.disabled =
+            true;
+
+        fileSelect.disabled =
+            true;
+
 
         resetProgress();
+
 
         try {
 
@@ -786,116 +1378,71 @@ downloadButton.onclick =
             const totalSize =
                 selected.size;
 
-            if (!totalChunks || !totalSize) {
+
+            if (
+                !totalChunks ||
+                !totalSize
+            ) {
 
                 throw new Error(
                     "檔案資訊不完整，請重新執行 makechunks workflow。"
                 );
             }
 
+
             const fileBase =
                 base
-                + encodeURIComponent(outputName)
+                + encodeURIComponent(
+                    outputName
+                )
                 + "/";
 
-            const chunks = [];
 
-            let downloadedSize = 0;
+            let usedStreaming =
+                false;
 
-            for (
-                let i = 1;
-                i <= totalChunks;
-                i++
+
+            /*
+             * Prefer direct-to-disk writing.
+             */
+
+            if (
+                typeof window.showSaveFilePicker ===
+                "function"
             ) {
 
-                statusText.textContent =
-                    `Downloading chunk ${i}...`;
-
-                const response =
-                    await fetch(
-                        fileBase
-                        + `chunk_part_${i}`,
-                        {
-                            cache: "no-store"
-                        }
+                usedStreaming =
+                    await streamingDownload(
+                        outputName,
+                        fileBase,
+                        totalChunks,
+                        totalSize
                     );
-
-                if (!response.ok) {
-
-                    throw new Error(
-                        `找不到 chunk_part_${i}`
-                    );
-                }
-
-                const data =
-                    await response.arrayBuffer();
-
-                chunks.push(data);
-
-                downloadedSize +=
-                    data.byteLength;
-
-                const percent =
-                    Math.min(
-                        100,
-                        Math.round(
-                            downloadedSize
-                            / totalSize
-                            * 100
-                        )
-                    );
-
-                progress.style.width =
-                    `${percent}%`;
-
-                percentage.textContent =
-                    `${percent}%`;
-
-                chunkInfo.textContent =
-                    `${i} / ${totalChunks} chunks`;
-
-                sizeInfo.textContent =
-                    `${formatSize(downloadedSize)} / ${formatSize(totalSize)}`;
             }
 
-            statusText.textContent =
-                "Reconstructing file...";
 
-            const file =
-                new Blob(
-                    chunks,
-                    {
-                        type:
-                            "application/octet-stream"
-                    }
+            /*
+             * Fallback for browsers that do not support
+             * File System Access API.
+             */
+
+            if (!usedStreaming) {
+
+                await blobDownload(
+                    outputName,
+                    fileBase,
+                    totalChunks,
+                    totalSize
                 );
+            }
 
-            const url =
-                URL.createObjectURL(file);
 
-            const a =
-                document.createElement("a");
+            progress.style.width =
+                "100%";
 
-            a.href = url;
+            percentage.textContent =
+                "100%";
 
-            a.download = outputName;
-
-            document.body.appendChild(a);
-
-            a.click();
-
-            a.remove();
-
-            setTimeout(
-                () => {
-                    URL.revokeObjectURL(url);
-                },
-                1000
-            );
-
-            progress.style.width = "100%";
-
-            percentage.textContent = "100%";
 
             statusText.textContent =
                 "Download completed";
@@ -903,11 +1450,14 @@ downloadButton.onclick =
             statusText.className =
                 "status-text success";
 
+
             chunkInfo.textContent =
                 `${totalChunks} / ${totalChunks} chunks`;
 
+
             sizeInfo.textContent =
                 formatSize(totalSize);
+
 
             message.textContent =
                 `${outputName} 已準備完成`;
@@ -920,11 +1470,13 @@ downloadButton.onclick =
 
             console.error(error);
 
+
             statusText.textContent =
                 "Download failed";
 
             statusText.className =
                 "status-text error";
+
 
             message.textContent =
                 error.message;
@@ -932,18 +1484,27 @@ downloadButton.onclick =
             message.className =
                 "message error";
 
-            progress.style.width = "0%";
 
-            percentage.textContent = "0%";
+            progress.style.width =
+                "0%";
+
+            percentage.textContent =
+                "0%";
         }
         finally {
 
-            downloadButton.disabled = false;
+            downloadButton.disabled =
+                false;
 
-            fileSelect.disabled = false;
+            fileSelect.disabled =
+                false;
         }
     };
 
+
+/* ============================================================
+   File selection
+============================================================ */
 
 fileSelect.onchange =
     () => {
