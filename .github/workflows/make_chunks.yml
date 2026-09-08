@@ -11,23 +11,42 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+
     permissions:
       contents: write
 
     steps:
+
+      # ==============================================================
+      # Checkout
+      # ==============================================================
+
       - name: Checkout Repository
         uses: actions/checkout@v5
+
+
+      # ==============================================================
+      # Python
+      # ==============================================================
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.9'
 
-      - name: Download and Chunk File
+
+      # ==============================================================
+      # Download, Chunk and Upload
+      # ==============================================================
+
+      - name: Download, Chunk and Upload
         env:
           DOWNLOAD_URL: ${{ inputs.download_url }}
+
         run: |
+
           python <<'PY'
+
           import urllib.request
           import os
           import re
@@ -35,6 +54,17 @@ jobs:
           import urllib.parse
           import json
           import shutil
+          import subprocess
+
+
+          # ============================================================
+          # Configuration
+          # ============================================================
+
+          CHUNK_SIZE = 50 * 1024 * 1024
+
+          # Upload every 5 chunks
+          UPLOAD_BATCH_SIZE = 5
 
 
           # ============================================================
@@ -142,6 +172,7 @@ jobs:
 
           def resolve_url(url):
 
+              print()
               print('Input URL:')
               print(url)
 
@@ -164,7 +195,10 @@ jobs:
 
           def get_filename(url, response=None):
 
+              # --------------------------------------------------------
               # 1. Content-Disposition
+              # --------------------------------------------------------
+
               if response:
 
                   disposition = response.headers.get(
@@ -189,7 +223,10 @@ jobs:
                           return filename
 
 
+              # --------------------------------------------------------
               # 2. URL filename
+              # --------------------------------------------------------
+
               path = urllib.parse.urlparse(
                   url
               ).path
@@ -209,8 +246,105 @@ jobs:
                       return filename
 
 
+              # --------------------------------------------------------
               # 3. Fallback
+              # --------------------------------------------------------
+
               return 'downloaded_file.zip'
+
+
+          # ============================================================
+          # Git Upload
+          # ============================================================
+
+          def upload_batch(batch):
+
+              if not batch:
+
+                  return
+
+
+              print()
+              print('========================================')
+              print(
+                  f'Uploading {len(batch)} chunks to GitHub'
+              )
+              print('========================================')
+
+
+              # --------------------------------------------------------
+              # Add chunks
+              # --------------------------------------------------------
+
+              for chunk_path in batch:
+
+                  print(
+                      f'Adding: {chunk_path}'
+                  )
+
+                  subprocess.run(
+                      [
+                          'git',
+                          'add',
+                          chunk_path
+                      ],
+                      check=True
+                  )
+
+
+              # --------------------------------------------------------
+              # Commit
+              # --------------------------------------------------------
+
+              first_chunk = os.path.basename(
+                  batch[0]
+              )
+
+              last_chunk = os.path.basename(
+                  batch[-1]
+              )
+
+              commit_message = (
+                  f'add: chunks {first_chunk} to {last_chunk}'
+              )
+
+
+              print()
+              print(
+                  f'Commit: {commit_message}'
+              )
+
+
+              subprocess.run(
+                  [
+                      'git',
+                      'commit',
+                      '-m',
+                      commit_message
+                  ],
+                  check=True
+              )
+
+
+              # --------------------------------------------------------
+              # Push
+              # --------------------------------------------------------
+
+              print()
+              print('Pushing to GitHub...')
+
+
+              subprocess.run(
+                  [
+                      'git',
+                      'push'
+                  ],
+                  check=True
+              )
+
+
+              print()
+              print('Batch uploaded successfully.')
 
 
           # ============================================================
@@ -219,8 +353,11 @@ jobs:
 
           url = os.environ['DOWNLOAD_URL']
 
-          download_url = resolve_url(url)
+          download_url = resolve_url(
+              url
+          )
 
+          print()
           print('Final download URL:')
           print(download_url)
 
@@ -229,9 +366,9 @@ jobs:
           # Download + Chunk
           # ============================================================
 
-          chunk_size = 50 * 1024 * 1024
+          print()
+          print('Opening download...')
 
-          print('Downloading...')
 
           req = urllib.request.Request(
               download_url,
@@ -240,6 +377,7 @@ jobs:
               }
           )
 
+
           with urllib.request.urlopen(req) as response:
 
               filename = get_filename(
@@ -247,23 +385,29 @@ jobs:
                   response
               )
 
+
+              print()
               print('Filename:')
               print(filename)
+
 
               folder = filename
 
 
               # ========================================================
-              # Remove old chunks
+              # Remove old local chunks
               # ========================================================
 
               if os.path.exists(folder):
 
+                  print()
                   print(
-                      f'Removing existing folder: {folder}'
+                      f'Removing existing local folder: {folder}'
                   )
 
-                  shutil.rmtree(folder)
+                  shutil.rmtree(
+                      folder
+                  )
 
 
               os.makedirs(
@@ -273,21 +417,36 @@ jobs:
 
 
               # ========================================================
-              # Split
+              # Download + Split
               # ========================================================
 
-              print('Splitting into chunks...')
+              print()
+              print('Starting download and chunking...')
+
+              print(
+                  f'Chunk size: '
+                  f'{CHUNK_SIZE:,} bytes'
+              )
+
+              print(
+                  f'Upload batch size: '
+                  f'{UPLOAD_BATCH_SIZE} chunks'
+              )
+
 
               part_num = 1
 
               total_size = 0
 
+              pending_chunks = []
+
 
               while True:
 
                   chunk_data = response.read(
-                      chunk_size
+                      CHUNK_SIZE
                   )
+
 
                   if not chunk_data:
 
@@ -300,6 +459,10 @@ jobs:
                   )
 
 
+                  # ----------------------------------------------------
+                  # Write chunk
+                  # ----------------------------------------------------
+
                   with open(
                       chunk_path,
                       'wb'
@@ -310,27 +473,103 @@ jobs:
                       )
 
 
-                  total_size += len(
+                  chunk_size_actual = len(
                       chunk_data
                   )
 
 
-                  print(
-                      f'Created {chunk_path} '
-                      f'({len(chunk_data)} bytes)'
+                  total_size += (
+                      chunk_size_actual
                   )
+
+
+                  pending_chunks.append(
+                      chunk_path
+                  )
+
+
+                  print()
+                  print(
+                      '----------------------------------------'
+                  )
+
+                  print(
+                      f'Created chunk {part_num}'
+                  )
+
+                  print(
+                      f'Chunk size: '
+                      f'{chunk_size_actual:,} bytes'
+                  )
+
+                  print(
+                      f'Total downloaded: '
+                      f'{total_size:,} bytes'
+                  )
+
+                  print(
+                      f'Pending upload: '
+                      f'{len(pending_chunks)}/'
+                      f'{UPLOAD_BATCH_SIZE}'
+                  )
+
+
+                  # ----------------------------------------------------
+                  # Upload every 5 chunks
+                  # ----------------------------------------------------
+
+                  if (
+                      len(pending_chunks)
+                      >= UPLOAD_BATCH_SIZE
+                  ):
+
+                      upload_batch(
+                          pending_chunks
+                      )
+
+                      pending_chunks.clear()
 
 
                   part_num += 1
 
 
+              # ========================================================
+              # Upload remaining chunks
+              # ========================================================
+
+              if pending_chunks:
+
+                  print()
+                  print(
+                      'Uploading final incomplete batch...'
+                  )
+
+                  upload_batch(
+                      pending_chunks
+                  )
+
+                  pending_chunks.clear()
+
+
+          # ============================================================
+          # Download Finished
+          # ============================================================
+
           total_chunks = part_num - 1
 
 
-          print('Done.')
+          print()
+          print('========================================')
+          print('ALL CHUNKS UPLOADED')
+          print('========================================')
+
 
           print(
-              f'Total size: {total_size} bytes'
+              f'Filename: {filename}'
+          )
+
+          print(
+              f'Total size: {total_size:,} bytes'
           )
 
           print(
@@ -342,17 +581,27 @@ jobs:
           # Update files.json
           # ============================================================
 
+          print()
           print('Updating files.json...')
+
 
           files = []
 
 
           for item in os.listdir('.'):
 
+              # --------------------------------------------------------
+              # Only directories
+              # --------------------------------------------------------
+
               if not os.path.isdir(item):
 
                   continue
 
+
+              # --------------------------------------------------------
+              # Must contain chunk_part_1
+              # --------------------------------------------------------
 
               chunk_path = os.path.join(
                   item,
@@ -360,13 +609,15 @@ jobs:
               )
 
 
-              if not os.path.exists(chunk_path):
+              if not os.path.exists(
+                  chunk_path
+              ):
 
                   continue
 
 
               # --------------------------------------------------------
-              # Calculate metadata
+              # Collect chunks
               # --------------------------------------------------------
 
               chunks = []
@@ -417,8 +668,10 @@ jobs:
                   )
 
 
-                  total_file_size += os.path.getsize(
-                      chunk_path
+                  total_file_size += (
+                      os.path.getsize(
+                          chunk_path
+                      )
                   )
 
 
@@ -430,6 +683,10 @@ jobs:
               chunks.sort()
 
 
+              # --------------------------------------------------------
+              # Add metadata
+              # --------------------------------------------------------
+
               files.append({
                   'name': item,
                   'size': total_file_size,
@@ -437,10 +694,18 @@ jobs:
               })
 
 
+          # ============================================================
+          # Sort files
+          # ============================================================
+
           files.sort(
               key=lambda x: x['name'].lower()
           )
 
+
+          # ============================================================
+          # Write files.json
+          # ============================================================
 
           with open(
               'files.json',
@@ -456,8 +721,11 @@ jobs:
               )
 
 
+          print()
           print('files.json updated.')
 
+
+          print()
           print(
               json.dumps(
                   files,
@@ -466,20 +734,35 @@ jobs:
               )
           )
 
+
           PY
 
-      - name: Commit and Push Chunks to Repo
+
+      # ================================================================
+      # Commit and Push files.json
+      # ================================================================
+
+      - name: Commit and Push files.json
         run: |
+
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          git add .
+
+          git add files.json
+
 
           if git diff --cached --quiet; then
-            echo "No changes to commit."
+
+            echo "No changes to files.json."
+
             exit 0
+
           fi
 
-          git commit -m "add: compiler chunks"
+
+          git commit \
+            -m "update: files.json"
+
 
           git push
