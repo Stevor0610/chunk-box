@@ -16,703 +16,489 @@ jobs:
       contents: write
 
     steps:
-
-      # ==============================================================
-      # Checkout
-      # ==============================================================
-
-      - name: Checkout Repository
+      # 1. Checkout repository
+      - name: Checkout repository
         uses: actions/checkout@v5
-
-
-      # ==============================================================
-      # Python
-      # ==============================================================
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
         with:
-          python-version: '3.9'
+          fetch-depth: 0
 
+      # 2. Setup Python
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.x'
 
-      # ==============================================================
-      # Download, Chunk and Upload
-      # ==============================================================
+      # 3. Configure Git
+      # IMPORTANT:
+      # This must be BEFORE the Python script because
+      # the Python script performs git commit/push itself.
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
 
+      # 4. Download, chunk and upload
       - name: Download, Chunk and Upload
         env:
           DOWNLOAD_URL: ${{ inputs.download_url }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
         run: |
-
-          python <<'PY'
-
-          import urllib.request
+          python - <<'PY'
           import os
           import re
-          import html
-          import urllib.parse
           import json
           import shutil
           import subprocess
+          import urllib.request
+          from urllib.parse import urlparse
+
+          DOWNLOAD_URL = os.environ["DOWNLOAD_URL"]
+
+          CHUNK_SIZE = 50 * 1024 * 1024       # 50 MiB
+          UPLOAD_BATCH_SIZE = 5                # 5 chunks per commit/push
+
+          ROOT = os.getcwd()
+          FILES_JSON = os.path.join(ROOT, "files.json")
 
 
           # ============================================================
-          # Configuration
+          # Git helper
           # ============================================================
 
-          CHUNK_SIZE = 50 * 1024 * 1024
+          def run_git(*args):
+              print(">", "git", *args)
 
-          # Upload every 5 chunks
-          UPLOAD_BATCH_SIZE = 5
-
-
-          # ============================================================
-          # MediaFire Resolver
-          # ============================================================
-
-          def resolve_mediafire(url):
-
-              print('Resolving MediaFire URL...')
-
-              req = urllib.request.Request(
-                  url,
-                  headers={
-                      'User-Agent': 'Mozilla/5.0'
-                  }
+              result = subprocess.run(
+                  ["git", *args],
+                  cwd=ROOT,
+                  text=True
               )
 
-              with urllib.request.urlopen(req) as response:
-
-                  page = response.read().decode(
-                      'utf-8',
-                      errors='ignore'
+              if result.returncode != 0:
+                  raise RuntimeError(
+                      f"Git command failed: git {' '.join(args)}"
                   )
 
-              patterns = [
-                  r'<a[^>]+id=["\']downloadButton["\'][^>]+href=["\']([^"\']+)',
-                  r'<a[^>]+href=["\']([^"\']+)["\'][^>]+id=["\']downloadButton["\']'
-              ]
 
-              for pattern in patterns:
+          def upload_batch(batch):
+              if not batch:
+                  return
 
-                  match = re.search(
-                      pattern,
-                      page,
-                      re.IGNORECASE
+              print()
+              print("=" * 60)
+              print(f"Uploading {len(batch)} chunks to GitHub")
+              print("=" * 60)
+
+              for path in batch:
+                  run_git("add", path)
+
+              first = os.path.basename(batch[0])
+              last = os.path.basename(batch[-1])
+
+              commit_message = (
+                  f"add: chunks {first} to {last}"
+              )
+
+              run_git("commit", "-m", commit_message)
+              run_git("push")
+
+              print("Upload batch completed.")
+              print()
+
+
+          # ============================================================
+          # Filename detection
+          # ============================================================
+
+          def detect_filename(url, response=None):
+              # Try Content-Disposition first
+              if response is not None:
+                  content_disposition = response.headers.get(
+                      "Content-Disposition"
                   )
 
-                  if match:
-
-                      direct_url = html.unescape(
-                          match.group(1)
+                  if content_disposition:
+                      match = re.search(
+                          r'filename\*=UTF-8\'\'([^;]+)',
+                          content_disposition,
+                          re.IGNORECASE
                       )
 
-                      print('MediaFire direct URL found.')
+                      if match:
+                          from urllib.parse import unquote
+                          return unquote(match.group(1))
 
-                      return direct_url
+                      match = re.search(
+                          r'filename="?([^"]+)"?',
+                          content_disposition,
+                          re.IGNORECASE
+                      )
 
-              raise RuntimeError(
-                  'Could not find MediaFire download URL.'
-              )
+                      if match:
+                          return match.group(1)
 
+              # Fallback to URL
+              parsed = urlparse(url)
+              filename = os.path.basename(parsed.path)
 
-          # ============================================================
-          # pCloud Resolver
-          # ============================================================
+              if filename:
+                  return filename
 
-          def resolve_pcloud(url):
-
-              print('Resolving pCloud URL...')
-
-              req = urllib.request.Request(
-                  url,
-                  headers={
-                      'User-Agent': 'Mozilla/5.0'
-                  }
-              )
-
-              with urllib.request.urlopen(req) as response:
-
-                  page = response.read().decode(
-                      'utf-8',
-                      errors='ignore'
-                  )
-
-              match = re.search(
-                  r'"downloadlink"\s*:\s*"([^"]+)"',
-                  page
-              )
-
-              if not match:
-
-                  raise RuntimeError(
-                      'Could not find pCloud downloadlink.'
-                  )
-
-              direct_url = match.group(1)
-
-              direct_url = direct_url.replace(
-                  '\\/',
-                  '/'
-              )
-
-              direct_url = html.unescape(
-                  direct_url
-              )
-
-              print('pCloud direct URL found.')
-
-              return direct_url
+              return "downloaded_file"
 
 
           # ============================================================
-          # Common URL Resolver
+          # URL resolver
           # ============================================================
 
           def resolve_url(url):
-
-              print()
-              print('Input URL:')
+              print("Original URL:")
               print(url)
+              print()
 
-              if 'mediafire.com/file/' in url:
+              # --------------------------------------------------------
+              # MediaFire
+              # --------------------------------------------------------
 
-                  return resolve_mediafire(url)
+              if "mediafire.com" in url.lower():
+                  print("Detected MediaFire URL")
 
-              if 'pcloud.link/' in url:
+                  req = urllib.request.Request(
+                      url,
+                      headers={
+                          "User-Agent": "Mozilla/5.0"
+                      }
+                  )
 
-                  return resolve_pcloud(url)
+                  with urllib.request.urlopen(req) as response:
+                      html = response.read().decode(
+                          "utf-8",
+                          errors="ignore"
+                      )
 
-              print('No resolver needed.')
+                  # MediaFire download button
+                  patterns = [
+                      r'href="(https://download[^"]+)"',
+                      r'href="(https://[^"]*mediafire[^"]*download[^"]+)"',
+                      r'"downloadLink":"([^"]+)"'
+                  ]
+
+                  for pattern in patterns:
+                      match = re.search(
+                          pattern,
+                          html,
+                          re.IGNORECASE
+                      )
+
+                      if match:
+                          resolved = match.group(1)
+
+                          resolved = (
+                              resolved
+                              .replace("\\/", "/")
+                              .replace("&amp;", "&")
+                          )
+
+                          print("Resolved MediaFire URL:")
+                          print(resolved)
+                          print()
+
+                          return resolved
+
+                  raise RuntimeError(
+                      "Could not resolve MediaFire download URL."
+                  )
+
+
+              # --------------------------------------------------------
+              # pCloud
+              # --------------------------------------------------------
+
+              if "pcloud.com" in url.lower():
+                  print("Detected pCloud URL")
+
+                  req = urllib.request.Request(
+                      url,
+                      headers={
+                          "User-Agent": "Mozilla/5.0"
+                      }
+                  )
+
+                  with urllib.request.urlopen(req) as response:
+                      html = response.read().decode(
+                          "utf-8",
+                          errors="ignore"
+                      )
+
+                  patterns = [
+                      r'"downloadlink":"([^"]+)"',
+                      r'"downloadLink":"([^"]+)"',
+                      r'https://[^"\']+\.pcloud[^"\']+'
+                  ]
+
+                  for pattern in patterns:
+                      match = re.search(
+                          pattern,
+                          html,
+                          re.IGNORECASE
+                      )
+
+                      if match:
+                          resolved = match.group(1)
+
+                          resolved = (
+                              resolved
+                              .replace("\\/", "/")
+                              .replace("&amp;", "&")
+                          )
+
+                          print("Resolved pCloud URL:")
+                          print(resolved)
+                          print()
+
+                          return resolved
+
+                  # Some pCloud links can be downloaded directly
+                  print(
+                      "Could not find a separate pCloud URL."
+                  )
+                  print(
+                      "Using original URL."
+                  )
+                  print()
+
+                  return url
+
+
+              # --------------------------------------------------------
+              # Normal URL
+              # --------------------------------------------------------
+
+              print("Using original URL")
+              print()
 
               return url
 
 
           # ============================================================
-          # Get Filename
+          # Resolve download URL
           # ============================================================
 
-          def get_filename(url, response=None):
-
-              # --------------------------------------------------------
-              # 1. Content-Disposition
-              # --------------------------------------------------------
-
-              if response:
-
-                  disposition = response.headers.get(
-                      'Content-Disposition',
-                      ''
-                  )
-
-                  match = re.search(
-                      r'filename\*?=(?:UTF-8\'\')?["\']?([^"\';]+)',
-                      disposition,
-                      re.IGNORECASE
-                  )
-
-                  if match:
-
-                      filename = urllib.parse.unquote(
-                          match.group(1)
-                      )
-
-                      if filename:
-
-                          return filename
-
-
-              # --------------------------------------------------------
-              # 2. URL filename
-              # --------------------------------------------------------
-
-              path = urllib.parse.urlparse(
-                  url
-              ).path
-
-              filename = os.path.basename(
-                  path
-              )
-
-              if filename:
-
-                  filename = urllib.parse.unquote(
-                      filename
-                  )
-
-                  if filename:
-
-                      return filename
-
-
-              # --------------------------------------------------------
-              # 3. Fallback
-              # --------------------------------------------------------
-
-              return 'downloaded_file.zip'
+          DOWNLOAD_URL = resolve_url(DOWNLOAD_URL)
 
 
           # ============================================================
-          # Git Upload
+          # Open download
           # ============================================================
 
-          def upload_batch(batch):
+          print("Opening download...")
 
-              if not batch:
-
-                  return
-
-
-              print()
-              print('========================================')
-              print(
-                  f'Uploading {len(batch)} chunks to GitHub'
-              )
-              print('========================================')
-
-
-              # --------------------------------------------------------
-              # Add chunks
-              # --------------------------------------------------------
-
-              for chunk_path in batch:
-
-                  print(
-                      f'Adding: {chunk_path}'
-                  )
-
-                  subprocess.run(
-                      [
-                          'git',
-                          'add',
-                          chunk_path
-                      ],
-                      check=True
-                  )
-
-
-              # --------------------------------------------------------
-              # Commit
-              # --------------------------------------------------------
-
-              first_chunk = os.path.basename(
-                  batch[0]
-              )
-
-              last_chunk = os.path.basename(
-                  batch[-1]
-              )
-
-              commit_message = (
-                  f'add: chunks {first_chunk} to {last_chunk}'
-              )
-
-
-              print()
-              print(
-                  f'Commit: {commit_message}'
-              )
-
-
-              subprocess.run(
-                  [
-                      'git',
-                      'commit',
-                      '-m',
-                      commit_message
-                  ],
-                  check=True
-              )
-
-
-              # --------------------------------------------------------
-              # Push
-              # --------------------------------------------------------
-
-              print()
-              print('Pushing to GitHub...')
-
-
-              subprocess.run(
-                  [
-                      'git',
-                      'push'
-                  ],
-                  check=True
-              )
-
-
-              print()
-              print('Batch uploaded successfully.')
-
-
-          # ============================================================
-          # Resolve URL
-          # ============================================================
-
-          url = os.environ['DOWNLOAD_URL']
-
-          download_url = resolve_url(
-              url
-          )
-
-          print()
-          print('Final download URL:')
-          print(download_url)
-
-
-          # ============================================================
-          # Download + Chunk
-          # ============================================================
-
-          print()
-          print('Opening download...')
-
-
-          req = urllib.request.Request(
-              download_url,
+          request = urllib.request.Request(
+              DOWNLOAD_URL,
               headers={
-                  'User-Agent': 'Mozilla/5.0'
+                  "User-Agent": "Mozilla/5.0"
               }
           )
 
+          response = urllib.request.urlopen(request)
 
-          with urllib.request.urlopen(req) as response:
+          filename = detect_filename(
+              DOWNLOAD_URL,
+              response
+          )
 
-              filename = get_filename(
-                  download_url,
-                  response
-              )
+          print("Filename:", filename)
 
+          # Remove characters that are problematic for paths
+          filename = re.sub(
+              r'[<>:"/\\|?*]',
+              "_",
+              filename
+          )
 
-              print()
-              print('Filename:')
-              print(filename)
+          filename = filename.strip()
 
+          if not filename:
+              filename = "downloaded_file"
 
-              folder = filename
-
-
-              # ========================================================
-              # Remove old local chunks
-              # ========================================================
-
-              if os.path.exists(folder):
-
-                  print()
-                  print(
-                      f'Removing existing local folder: {folder}'
-                  )
-
-                  shutil.rmtree(
-                      folder
-                  )
-
-
-              os.makedirs(
-                  folder,
-                  exist_ok=True
-              )
-
-
-              # ========================================================
-              # Download + Split
-              # ========================================================
-
-              print()
-              print('Starting download and chunking...')
-
-              print(
-                  f'Chunk size: '
-                  f'{CHUNK_SIZE:,} bytes'
-              )
-
-              print(
-                  f'Upload batch size: '
-                  f'{UPLOAD_BATCH_SIZE} chunks'
-              )
-
-
-              part_num = 1
-
-              total_size = 0
-
-              pending_chunks = []
-
-
-              while True:
-
-                  chunk_data = response.read(
-                      CHUNK_SIZE
-                  )
-
-
-                  if not chunk_data:
-
-                      break
-
-
-                  chunk_path = os.path.join(
-                      folder,
-                      f'chunk_part_{part_num}'
-                  )
-
-
-                  # ----------------------------------------------------
-                  # Write chunk
-                  # ----------------------------------------------------
-
-                  with open(
-                      chunk_path,
-                      'wb'
-                  ) as chunk_file:
-
-                      chunk_file.write(
-                          chunk_data
-                      )
-
-
-                  chunk_size_actual = len(
-                      chunk_data
-                  )
-
-
-                  total_size += (
-                      chunk_size_actual
-                  )
-
-
-                  pending_chunks.append(
-                      chunk_path
-                  )
-
-
-                  print()
-                  print(
-                      '----------------------------------------'
-                  )
-
-                  print(
-                      f'Created chunk {part_num}'
-                  )
-
-                  print(
-                      f'Chunk size: '
-                      f'{chunk_size_actual:,} bytes'
-                  )
-
-                  print(
-                      f'Total downloaded: '
-                      f'{total_size:,} bytes'
-                  )
-
-                  print(
-                      f'Pending upload: '
-                      f'{len(pending_chunks)}/'
-                      f'{UPLOAD_BATCH_SIZE}'
-                  )
-
-
-                  # ----------------------------------------------------
-                  # Upload every 5 chunks
-                  # ----------------------------------------------------
-
-                  if (
-                      len(pending_chunks)
-                      >= UPLOAD_BATCH_SIZE
-                  ):
-
-                      upload_batch(
-                          pending_chunks
-                      )
-
-                      pending_chunks.clear()
-
-
-                  part_num += 1
-
-
-              # ========================================================
-              # Upload remaining chunks
-              # ========================================================
-
-              if pending_chunks:
-
-                  print()
-                  print(
-                      'Uploading final incomplete batch...'
-                  )
-
-                  upload_batch(
-                      pending_chunks
-                  )
-
-                  pending_chunks.clear()
+          print("Final filename:", filename)
 
 
           # ============================================================
-          # Download Finished
+          # File information
           # ============================================================
 
-          total_chunks = part_num - 1
+          total_size = response.headers.get("Content-Length")
 
+          if total_size:
+              total_size = int(total_size)
+              print(
+                  f"File size: {total_size:,} bytes "
+                  f"({total_size / 1024 / 1024:.2f} MiB)"
+              )
+          else:
+              total_size = None
+              print("File size: unknown")
+
+          print(
+              f"Chunk size: {CHUNK_SIZE:,} bytes "
+              f"(50 MiB)"
+          )
 
           print()
-          print('========================================')
-          print('ALL CHUNKS UPLOADED')
-          print('========================================')
 
 
-          print(
-              f'Filename: {filename}'
+          # ============================================================
+          # Chunk directory
+          # ============================================================
+
+          folder = os.path.join(
+              ROOT,
+              filename
           )
 
-          print(
-              f'Total size: {total_size:,} bytes'
-          )
+          # Remove an old local copy
+          if os.path.exists(folder):
+              print(
+                  f"Removing existing local folder: {filename}"
+              )
+              shutil.rmtree(folder)
 
-          print(
-              f'Total chunks: {total_chunks}'
-          )
+          os.makedirs(folder, exist_ok=True)
+
+
+          # ============================================================
+          # Download + chunk
+          # ============================================================
+
+          chunk_number = 1
+          downloaded = 0
+          batch = []
+
+          while True:
+
+              chunk_path = os.path.join(
+                  folder,
+                  f"chunk_part_{chunk_number}"
+              )
+
+              remaining = CHUNK_SIZE
+              written = 0
+
+              with open(chunk_path, "wb") as chunk_file:
+
+                  while remaining > 0:
+
+                      data = response.read(
+                          min(1024 * 1024, remaining)
+                      )
+
+                      if not data:
+                          break
+
+                      chunk_file.write(data)
+
+                      written += len(data)
+                      remaining -= len(data)
+                      downloaded += len(data)
+
+              # No data means download is finished
+              if written == 0:
+                  os.remove(chunk_path)
+                  break
+
+              print(
+                  f"Created chunk {chunk_number}: "
+                  f"{written:,} bytes"
+              )
+
+              batch.append(
+                  os.path.join(
+                      filename,
+                      f"chunk_part_{chunk_number}"
+                  )
+              )
+
+              # --------------------------------------------------------
+              # Upload every 5 chunks
+              # --------------------------------------------------------
+
+              if len(batch) >= UPLOAD_BATCH_SIZE:
+                  upload_batch(batch)
+                  batch = []
+
+              chunk_number += 1
+
+
+          # ============================================================
+          # Upload remaining chunks
+          # ============================================================
+
+          if batch:
+              upload_batch(batch)
+
+
+          total_chunks = chunk_number - 1
+
+          print()
+          print("=" * 60)
+          print("All chunks uploaded successfully")
+          print("=" * 60)
+          print("Filename:", filename)
+          print("Size:", downloaded)
+          print("Chunks:", total_chunks)
+          print()
 
 
           # ============================================================
           # Update files.json
+          #
+          # IMPORTANT:
+          # Only done AFTER every chunk has successfully uploaded.
+          # Therefore index.html will not show incomplete files.
           # ============================================================
-
-          print()
-          print('Updating files.json...')
-
 
           files = []
 
+          if os.path.exists(FILES_JSON):
+              try:
+                  with open(
+                      FILES_JSON,
+                      "r",
+                      encoding="utf-8"
+                  ) as f:
+                      files = json.load(f)
 
-          for item in os.listdir('.'):
+                  if not isinstance(files, list):
+                      files = []
 
-              # --------------------------------------------------------
-              # Only directories
-              # --------------------------------------------------------
-
-              if not os.path.isdir(item):
-
-                  continue
-
-
-              # --------------------------------------------------------
-              # Must contain chunk_part_1
-              # --------------------------------------------------------
-
-              chunk_path = os.path.join(
-                  item,
-                  'chunk_part_1'
-              )
+              except Exception:
+                  files = []
 
 
-              if not os.path.exists(
-                  chunk_path
-              ):
-
-                  continue
-
-
-              # --------------------------------------------------------
-              # Collect chunks
-              # --------------------------------------------------------
-
-              chunks = []
-
-              total_file_size = 0
+          # Remove existing entry with same filename
+          files = [
+              item
+              for item in files
+              if item.get("name") != filename
+          ]
 
 
-              for chunk_name in os.listdir(item):
-
-                  if not chunk_name.startswith(
-                      'chunk_part_'
-                  ):
-
-                      continue
-
-
-                  chunk_path = os.path.join(
-                      item,
-                      chunk_name
-                  )
+          # Add new file
+          files.append({
+              "name": filename,
+              "size": downloaded,
+              "chunks": total_chunks
+          })
 
 
-                  if not os.path.isfile(
-                      chunk_path
-                  ):
-
-                      continue
-
-
-                  match = re.match(
-                      r'chunk_part_(\d+)$',
-                      chunk_name
-                  )
-
-
-                  if not match:
-
-                      continue
-
-
-                  number = int(
-                      match.group(1)
-                  )
-
-
-                  chunks.append(
-                      number
-                  )
-
-
-                  total_file_size += (
-                      os.path.getsize(
-                          chunk_path
-                      )
-                  )
-
-
-              if not chunks:
-
-                  continue
-
-
-              chunks.sort()
-
-
-              # --------------------------------------------------------
-              # Add metadata
-              # --------------------------------------------------------
-
-              files.append({
-                  'name': item,
-                  'size': total_file_size,
-                  'chunks': len(chunks)
-              })
-
-
-          # ============================================================
-          # Sort files
-          # ============================================================
-
-          files.sort(
-              key=lambda x: x['name'].lower()
-          )
-
-
-          # ============================================================
           # Write files.json
-          # ============================================================
-
           with open(
-              'files.json',
-              'w',
-              encoding='utf-8'
+              FILES_JSON,
+              "w",
+              encoding="utf-8"
           ) as f:
-
               json.dump(
                   files,
                   f,
@@ -720,49 +506,33 @@ jobs:
                   indent=4
               )
 
-
-          print()
-          print('files.json updated.')
+              f.write("\n")
 
 
-          print()
-          print(
-              json.dumps(
-                  files,
-                  ensure_ascii=False,
-                  indent=4
-              )
+          print("Updated files.json")
+
+
+          # ============================================================
+          # Final commit
+          # ============================================================
+
+          run_git("add", "files.json")
+
+          run_git(
+              "commit",
+              "-m",
+              f"update: add {filename} to files.json"
           )
 
+          run_git("push")
 
+          print()
+          print("=" * 60)
+          print("DONE")
+          print("=" * 60)
+          print()
+          print(f"File: {filename}")
+          print(f"Size: {downloaded:,} bytes")
+          print(f"Chunks: {total_chunks}")
+          print()
           PY
-
-
-      # ================================================================
-      # Commit and Push files.json
-      # ================================================================
-
-      - name: Commit and Push files.json
-        run: |
-
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
-
-          git add files.json
-
-
-          if git diff --cached --quiet; then
-
-            echo "No changes to files.json."
-
-            exit 0
-
-          fi
-
-
-          git commit \
-            -m "update: files.json"
-
-
-          git push
