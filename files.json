@@ -1,5 +1,10 @@
 [
     {
+        "name": "alpine-standard-3.24.1-aarch64.iso",
+        "size": 393361408,
+        "chunks": 8
+    },
+    {
         "name": "LINEPortable.zip",
         "size": 79426777,
         "chunks": 2
