@@ -468,19 +468,33 @@ class ModernEditableEditor(ctk.CTk, TkinterDnD.DnDWrapper if HAS_DND else object
 
     # ==================== 🌙 Theme & Appearance ====================
 
+
     def toggle_appearance_mode(self):
+        was_zoomed = self.state() == "zoomed"
+        self.withdraw()
+
         if ctk.get_appearance_mode() == "Dark":
             ctk.set_appearance_mode("light")
             self.switch_theme.configure(text="☀️ Light Mode")
-            for tid, info in self.tabs_data.items():
-                info["sheet"].change_theme(theme="light green")
-                info["sheet"].redraw()
+            new_theme = "light green"
         else:
             ctk.set_appearance_mode("dark")
             self.switch_theme.configure(text="🌙 Dark Mode")
-            for tid, info in self.tabs_data.items():
-                info["sheet"].change_theme(theme="dark blue")
+            new_theme = "dark blue"
+
+        active_tid = self.get_active_tab_id()
+        for tid, info in self.tabs_data.items():
+            info["sheet"].change_theme(theme=new_theme)
+            if tid == active_tid:
                 info["sheet"].redraw()
+            else:
+
+                info["_needs_redraw"] = True
+
+        self.update_idletasks()
+        self.deiconify()
+        if was_zoomed:
+            self.state("zoomed")
 
     # ==================== 💾 User Preferences & History ====================
 
@@ -515,19 +529,25 @@ class ModernEditableEditor(ctk.CTk, TkinterDnD.DnDWrapper if HAS_DND else object
     def update_history_menu(self):
         self.history = [p for p in self.history if os.path.exists(p)]
 
-    def show_history_menu(self):
-        """Displays historical documents dropdown relative to history button position"""
-        if self.history_menu is None:
-            self.history_menu = tk.Menu(
-                self, tearoff=0,
-                bg="#111115", fg="white",
-                activebackground="#1f538d",
-                font=("Segoe UI", 10),
-                borderwidth=0
-            )
+    def _get_menu_colors(self):
+        if ctk.get_appearance_mode() == "Dark":
+            return {"bg": "#111115", "fg": "white", "activebackground": "#1f538d"}
+        else:
+            return {"bg": "#f1f3f5", "fg": "#212529", "activebackground": "#a5d8ff"}
 
-        self.history_menu.delete(0, "end")
-        
+    def show_history_menu(self):
+        colors = self._get_menu_colors()
+
+        if self.history_menu is not None:
+            self.history_menu.destroy()
+
+        self.history_menu = tk.Menu(
+            self, tearoff=0,
+            font=("Segoe UI", 10),
+            borderwidth=0,
+            **colors
+        )
+
         if not self.history:
             self.history_menu.add_command(label="(No history recorded)", state="disabled")
         else:
@@ -539,7 +559,7 @@ class ModernEditableEditor(ctk.CTk, TkinterDnD.DnDWrapper if HAS_DND else object
                     label=f"📄 {name}",
                     command=lambda p=path: self.load_file(target_file=p)
                 )
-        
+
         x = self.btn_history.winfo_rootx()
         y = self.btn_history.winfo_rooty() + self.btn_history.winfo_height()
         self.history_menu.post(x, y)
@@ -562,31 +582,6 @@ class ModernEditableEditor(ctk.CTk, TkinterDnD.DnDWrapper if HAS_DND else object
                     sheet.refresh()
                 except Exception as e:
                     print(f"Failed to synchronize table size scaling (Tab ID: {tid}): {e}")
-
-    def on_sheet_zoom(self, event=None):
-        tid = self.get_active_tab_id()
-        if not tid or tid not in self.tabs_data:
-            return
-            
-        sheet = self.tabs_data[tid]["sheet"]
-        try:
-            font_opt = sheet.options.table_font
-            actual_size = font_opt[1]
-            
-            self.current_font_size = int(actual_size)
-            
-            self.lbl_font_val.configure(text=f"{self.current_font_size}px")
-            
-            slider_min = self.font_slider.cget("from")
-            slider_max = self.font_slider.cget("to")
-            safe_size = max(slider_min, min(self.current_font_size, slider_max))
-            
-            self.font_slider.configure(command=None)
-            self.font_slider.set(safe_size)
-            self.font_slider.configure(command=self.change_table_font_size)
-            
-        except Exception as e:
-            print(f"Failed to sync slider on zoom: {e}")
 
     def _on_ctrl_mousewheel(self, event):
         if event.delta > 0:
@@ -709,6 +704,10 @@ class ModernEditableEditor(ctk.CTk, TkinterDnD.DnDWrapper if HAS_DND else object
             info = self.tabs_data[tid]
             sheet = info["sheet"]
 
+            if info.get("_needs_redraw"):
+                info["_needs_redraw"] = False
+                sheet.redraw()
+
             try:
                 sheet.set_options(
                     table_font=("Segoe UI", self.current_font_size, "normal"),
@@ -740,20 +739,30 @@ class ModernEditableEditor(ctk.CTk, TkinterDnD.DnDWrapper if HAS_DND else object
             new_name = f"📄 {old_name.replace('📄 ', '')} *"
             self.tab_view.rename(old_name, new_name)
             self.tabs_data[tab_id]["tab_name"] = new_name
+            try:
+                tab_button = self.tab_view._segmented_button._buttons_dict[new_name]
+                tab_button.bind("<Button-3>", self.show_tab_context_menu)
+                tab_button.bind("<Double-Button-1>", self._on_tab_double_click)
+            except Exception:
+                pass
+
             self.on_tab_changed()
 
     def show_tab_context_menu(self, event):
-        if self.tab_context_menu is None:
-            self.tab_context_menu = tk.Menu(
-                self, tearoff=0,
-                bg="#111115", fg="white",
-                activebackground="#1f538d",
-                borderwidth=0
-            )
-            self.tab_context_menu.add_command(label="❌ Close Active Tab", command=self.close_active_tab)
-            self.tab_context_menu.add_command(label="💾 Save Active Tab", command=self.save_file_direct)
-            self.tab_context_menu.add_separator()
-            self.tab_context_menu.add_command(label="🧹 Close All Other Tabs", command=self.close_other_tabs)
+        colors = self._get_menu_colors()
+
+        if self.tab_context_menu is not None:
+            self.tab_context_menu.destroy()
+
+        self.tab_context_menu = tk.Menu(
+            self, tearoff=0,
+            borderwidth=0,
+            **colors
+        )
+        self.tab_context_menu.add_command(label="❌ Close Active Tab", command=self.close_active_tab)
+        self.tab_context_menu.add_command(label="💾 Save Active Tab", command=self.save_file_direct)
+        self.tab_context_menu.add_separator()
+        self.tab_context_menu.add_command(label="🧹 Close All Other Tabs", command=self.close_other_tabs)
 
         self.tab_context_menu.post(event.x_root, event.y_root)
         
@@ -763,6 +772,13 @@ class ModernEditableEditor(ctk.CTk, TkinterDnD.DnDWrapper if HAS_DND else object
             return
 
         info = self.tabs_data[tid]
+
+        # ✅ 有未存檔修改時禁止改名
+        if info["modified"]:
+            messagebox.showwarning("Rename Blocked", "Please save the file before renaming.")
+
+            return
+
         old_tab_name = info["tab_name"]
         file_path = info.get("file_path", "")
             
@@ -795,16 +811,15 @@ class ModernEditableEditor(ctk.CTk, TkinterDnD.DnDWrapper if HAS_DND else object
                     return
             try:
                 os.rename(file_path, new_path)
+
                 info["file_path"] = new_path
             except Exception as e:
                 messagebox.showerror("Rename Error", str(e))
                 return
 
-            prefix = "● " if info.get("modified") else "📄 "
-            new_tab_name = prefix + new_name + ext
+            new_tab_name = f"📄 {new_name}{ext}"
         else:
-            prefix = "● " if info.get("modified") else "📄 "
-            new_tab_name = prefix + new_name
+            new_tab_name = f"📄 {new_name}"
 
         self.tab_view.rename(old_tab_name, new_tab_name)
         info["tab_name"] = new_tab_name
@@ -921,7 +936,6 @@ class ModernEditableEditor(ctk.CTk, TkinterDnD.DnDWrapper if HAS_DND else object
 
         self.tab_view.set(tab_title)
 
-        # ✅ 延遲填入資料，讓 UI 先顯示空表
         if rows_data:
             self.after(50, lambda: self._deferred_set_data(tab_id, rows_data))
         else:
@@ -933,9 +947,14 @@ class ModernEditableEditor(ctk.CTk, TkinterDnD.DnDWrapper if HAS_DND else object
         if tab_id not in self.tabs_data:
             return
 
-        sheet = self.tabs_data[tab_id]["sheet"]
+        info = self.tabs_data[tab_id]
+        sheet = info["sheet"]
+
+        sheet.extra_bindings("sheet_modified", None)
         sheet.set_sheet_data(rows_data, redraw=False)
         sheet.redraw()
+        sheet.extra_bindings("sheet_modified", lambda event, tid=tab_id: self.mark_as_modified(tid))
+
         self.on_tab_changed()
 
     def new_blank_tab(self):
@@ -965,6 +984,7 @@ class ModernEditableEditor(ctk.CTk, TkinterDnD.DnDWrapper if HAS_DND else object
                 return
 
         try:
+
             info["sheet"].destroy()
         except Exception:
             pass
@@ -1005,15 +1025,20 @@ class ModernEditableEditor(ctk.CTk, TkinterDnD.DnDWrapper if HAS_DND else object
     def _execute_tab_closure(self, tid):
         info = self.tabs_data[tid]
         tab_name = info["tab_name"]
-        
+
+        try:
+            info["sheet"].destroy()
+        except Exception:
+            pass
+
         try:
             self.tab_view.delete(tab_name)
         except Exception:
             pass
-            
+
         if tid in self.tabs_data:
             del self.tabs_data[tid]
-            
+
         self.on_tab_changed()
 
     # ==================== 📂 File Ingestion Pipeline ====================
@@ -1240,7 +1265,7 @@ class ModernEditableEditor(ctk.CTk, TkinterDnD.DnDWrapper if HAS_DND else object
             )
             return
 
-        if not info["file_path"] or "untitled" in info["tab_name"]:
+        if not info["file_path"]:
             self.save_file_as(force_save_as=True)
             return
 
@@ -1255,7 +1280,7 @@ class ModernEditableEditor(ctk.CTk, TkinterDnD.DnDWrapper if HAS_DND else object
         file_path = info["file_path"]
 
         if not info["modified"] and not force_save_as:
-            if not file_path or "untitled" in info["tab_name"]:
+            if not file_path:
                 self.led_indicator.configure(text_color=("#1b5e20", "#2ecc71"))
                 self.lbl_status.configure(
                     text="ℹ️ Initial blank templates do not require file generation until modified.", 
@@ -1405,6 +1430,15 @@ class ModernEditableEditor(ctk.CTk, TkinterDnD.DnDWrapper if HAS_DND else object
 
         old_title = info["tab_name"]
         clean_name = f"📄 {os.path.basename(save_path)}"
+
+        # ✅ 防止 tab 名稱重複
+        existing_names = [i["tab_name"] for t, i in self.tabs_data.items() if t != tid]
+        counter = 1
+        base = clean_name
+        while clean_name in existing_names:
+            clean_name = f"{base} ({counter})"
+            counter += 1
+
         self.tab_view.rename(old_title, clean_name)
 
         try:
@@ -1520,6 +1554,7 @@ class ModernEditableEditor(ctk.CTk, TkinterDnD.DnDWrapper if HAS_DND else object
             self.lbl_status.configure(
                 text=f"❌ Failed to calculate appropriate widths: {e}", 
                 text_color=("#b71c1c", "#e74c3c")
+
             )
 
     def on_double_click_resize(self, event):
@@ -1612,6 +1647,7 @@ class ModernEditableEditor(ctk.CTk, TkinterDnD.DnDWrapper if HAS_DND else object
             item_frame.pack_propagate(False)
 
             lbl_col = ctk.CTkLabel(
+
                 item_frame, 
                 text=f"{idx+1}.  {col_name}", 
                 font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold")
@@ -1624,6 +1660,7 @@ class ModernEditableEditor(ctk.CTk, TkinterDnD.DnDWrapper if HAS_DND else object
                 font=ctk.CTkFont(family="Consolas", size=11, weight="bold"),
                 text_color=("#d9480f", "#f59e0b")
             )
+
             lbl_type.pack(side="right", padx=15)
 
     # ==================== 📊 Selection Statistics ====================
