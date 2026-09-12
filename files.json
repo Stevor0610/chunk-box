@@ -13,5 +13,11 @@
         "name": "black_feather_pack.zip",
         "size": 157603734,
         "chunks": 4
+    },
+    {
+        "name": "black_feather_new.zip",
+        "folder": "black_feather_new.zip.chunks",
+        "size": 22,
+        "chunks": 1
     }
 ]
