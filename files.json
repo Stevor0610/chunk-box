@@ -8,5 +8,10 @@
         "name": "python-3.14.7-embed-amd64.zip",
         "size": 12673227,
         "chunks": 1
+    },
+    {
+        "name": "black_feather_pack.zip",
+        "size": 157603734,
+        "chunks": 4
     }
 ]
