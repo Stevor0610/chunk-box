@@ -1401,23 +1401,33 @@ downloadButton.onclick =
             let usedStreaming =
                 false;
 
-
-            /*
-             * Prefer direct-to-disk writing.
-             */
-
             if (
                 typeof window.showSaveFilePicker ===
                 "function"
             ) {
-
-                usedStreaming =
-                    await streamingDownload(
-                        outputName,
-                        fileBase,
-                        totalChunks,
-                        totalSize
+                try {
+                    usedStreaming =
+                        await streamingDownload(
+                            outputName,
+                            fileBase,
+                            totalChunks,
+                            totalSize
+                        );
+                } catch (pickerError) {
+                    if (pickerError.name === 'AbortError') {
+                        console.log("使用者取消了儲存路徑選擇。");
+                        downloadButton.disabled = false;
+                        fileSelect.disabled = false;
+                        resetProgress();
+                        return; // 中斷下載流程，但不顯示報錯訊息
+                    }
+                    // 如果是因為手勢過期、非 HTTPS 環境或瀏覽器不允許此 API 的其他錯誤
+                    console.warn(
+                        "File System Access API 啟動失敗，已自動降級為傳統下載：", 
+                        pickerError.message
                     );
+                    usedStreaming = false; // 降級改用 blob 傳統下載
+                }
             }
 
 
@@ -1427,7 +1437,7 @@ downloadButton.onclick =
              */
 
             if (!usedStreaming) {
-
+                statusText.textContent = "正在透過傳統模式下載...";
                 await blobDownload(
                     outputName,
                     fileBase,
