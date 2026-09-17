@@ -1,4 +1,4 @@
-===FILE_START|web.txt|14922|10bba887f43debdeb57dc65d639f69dd|TEXT===
+===FILE_START|web.txt|15617|97ac1eb12d2ce85129f9bcf3cf50f2e9|TEXT===
 <!DOCTYPE html>
 <html lang="zh-TW">
 <head>
@@ -8,8 +8,6 @@
 <style>
     * { box-sizing: border-box; }
     html, body { margin: 0; padding: 0; min-height: 100%; width: 100%; }
-    
-    /* 這裡設計了一個半透明磨砂玻璃背景，讓它看起來像一個高級的獨立彈出視窗 */
     body {
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans TC", Arial, sans-serif;
         background: radial-gradient(circle at top, #141a24 0%, #0b0e14 100%);
@@ -21,7 +19,6 @@
         padding: 24px;
         overflow: hidden;
     }
-    
     .container {
         width: 100%;
         max-width: 680px;
@@ -33,17 +30,14 @@
         backdrop-filter: blur(20px);
         animation: fadeIn 0.4s cubic-bezier(0.16, 1, 0.3, 1);
     }
-
     @keyframes fadeIn {
         from { opacity: 0; transform: scale(0.96) translateY(10px); }
         to { opacity: 1; transform: scale(1) translateY(0); }
     }
-
     h1 { margin: 0 0 8px; font-size: 30px; font-weight: 700; letter-spacing: -0.5px; color: #f4f7fb; }
     .subtitle { margin: 0 0 28px; color: #8f9aaa; font-size: 14px; }
     .section { margin-bottom: 22px; }
     .label { display: block; margin-bottom: 9px; font-size: 13px; font-weight: 600; color: #aeb7c5; }
-    
     .file-select {
         width: 100%; padding: 13px 15px; border-radius: 10px; border: 1px solid #3a4352;
         background: #151a22; color: #e8ecf2; font-size: 15px; outline: none; cursor: pointer;
@@ -51,12 +45,10 @@
     }
     .file-select:hover { background: #191f29; border-color: #4a5668; }
     .file-select:focus { border-color: #4d8dff; box-shadow: 0 0 0 3px rgba(77, 141, 255, 0.15); }
-    
     .file-info { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px; }
     .info-box { background: #151a22; border: 1px solid #2f3744; border-radius: 10px; padding: 13px 15px; }
     .info-title { display: block; margin-bottom: 5px; color: #7f8a9a; font-size: 12px; }
     .info-value { color: #e8edf5; font-size: 14px; font-weight: 600; word-break: break-word; }
-    
     #download {
         width: 100%; margin-top: 4px; padding: 13px 18px; border: none; border-radius: 10px;
         background: linear-gradient(135deg, #367ff0, #2864d7); color: white; font-size: 15px;
@@ -66,7 +58,6 @@
     #download:hover:not(:disabled) { filter: brightness(1.08); transform: translateY(-1px); box-shadow: 0 7px 22px rgba(38, 100, 215, 0.35); }
     #download:active:not(:disabled) { transform: translateY(0); box-shadow: 0 3px 12px rgba(38, 100, 215, 0.25); }
     #download:disabled { opacity: 0.45; cursor: not-allowed; box-shadow: none; }
-    
     .status-area { margin-top: 28px; }
     .status-text { margin-bottom: 8px; color: #aeb7c5; font-size: 14px; font-weight: 500; }
     .status-text.success { color: #61d99b; }
@@ -79,11 +70,9 @@
     }
     .stats { display: flex; justify-content: space-between; gap: 15px; margin-top: 10px; color: #818c9c; font-size: 12px; }
     .stats span { white-space: nowrap; }
-    
     .message { min-height: 20px; margin-top: 18px; font-size: 13px; line-height: 1.5; color: #8e99a8; word-break: break-word; }
     .message.success { color: #61d99b; }
     .message.error { color: #ff7272; }
-    
     @media (max-width: 600px) {
         body { padding: 14px; }
         .container { padding: 24px 20px; border-radius: 15px; }
@@ -251,28 +240,16 @@ async function downloadChunk(fileBase, index, onBytes) {
     return result.buffer;
 }
 
-async function streamingDownload(outputName, fileBase, totalChunks, totalSize) {
-    // 這裡做了雙重安全檢查，確保能直接回饋給使用者
-    if (typeof window.showSaveFilePicker !== "function" || !window.isSecureContext) {
-        throw new Error("您的瀏覽器或存取協定（如 file:///）不允許使用本機串流寫入 API。請將此 index.html 部署至 GitHub Pages (HTTPS) 或是透過 localhost 本地伺服器開啟。");
-    }
-    statusText.textContent = "Choose save location...";
-    let handle, writable;
-    try {
-        handle = await window.showSaveFilePicker({ suggestedName: outputName });
-        writable = await handle.createWritable();
-    } catch (err) {
-        if (err.name === "AbortError") {
-            throw new Error("使用者取消了儲存位置選擇。");
-        }
-        throw err;
-    }
-
+/* ============================================================
+   修復後的串流寫入函式（接收已開啟的 fileHandle 與 writable）
+============================================================ */
+async function startStreamingDownload(writable, fileBase, totalChunks, totalSize) {
     const pending = new Map();
     let nextToWrite = 1;
     let nextChunk = 1;
     let downloadedSize = 0;
     let completedChunks = 0;
+
     async function worker() {
         while (true) {
             const index = nextChunk++;
@@ -285,6 +262,7 @@ async function streamingDownload(outputName, fileBase, totalChunks, totalSize) {
             completedChunks++;
             updateProgress(downloadedSize, totalSize, completedChunks, totalChunks);
             pending.set(index, data);
+
             while (pending.has(nextToWrite)) {
                 const chunk = pending.get(nextToWrite);
                 pending.delete(nextToWrite);
@@ -294,6 +272,7 @@ async function streamingDownload(outputName, fileBase, totalChunks, totalSize) {
             }
         }
     }
+
     try {
         const workerCount = Math.min(MAX_CONNECTIONS, totalChunks);
         const workers = [];
@@ -311,14 +290,44 @@ async function streamingDownload(outputName, fileBase, totalChunks, totalSize) {
     }
 }
 
+// 監聽按鈕點擊事件：此處為 onclick 事件的同步最前端，是「使用者手勢」合法黃金期！
 downloadButton.onclick = async () => {
     const outputName = fileSelect.value;
     if (!outputName) return;
     const selected = files.find(file => file.name === outputName);
     if (!selected) return;
+
+    // 🔒 1. 核心修復：在 onclick 第一行「無等待、同步」呼叫 showSaveFilePicker！
+    if (typeof window.showSaveFilePicker !== "function" || !window.isSecureContext) {
+        statusText.textContent = "Download failed";
+        statusText.className = "status-text error";
+        message.textContent = "您的瀏覽器不支援 Native File System API。請確保網址為 https:// 並在 Chromium 核心的瀏覽器（如 Chrome, Edge）中開啟本頁面。";
+        message.className = "message error";
+        return;
+    }
+
+    statusText.textContent = "Choose save location...";
+    let handle, writable;
+    try {
+        // 第一時間執行，100% 繞過 "The request is not allowed" 的 User Gesture 限制！
+        handle = await window.showSaveFilePicker({ suggestedName: outputName });
+        writable = await handle.createWritable();
+    } catch (err) {
+        console.error(err);
+        if (err.name === "AbortError") {
+            message.textContent = "使用者取消了儲存。";
+        } else {
+            message.textContent = "無法取得檔案寫入權限: " + err.message;
+        }
+        message.className = "message error";
+        return;
+    }
+
+    // 🔑 2. 當權限順利拿到後，才放心地在背景執行各種非同步資料流
     downloadButton.disabled = true;
     fileSelect.disabled = true;
     resetProgress();
+
     try {
         const totalChunks = selected.chunks;
         const totalSize = selected.size;
@@ -327,8 +336,8 @@ downloadButton.onclick = async () => {
         }
         const fileBase = base + encodeURIComponent(outputName) + "/";
         
-        // ❌ 移除任何 blobDownload 降級 fallback，只允許硬碟直寫
-        await streamingDownload(outputName, fileBase, totalChunks, totalSize);
+        // 開始進行多連線串流下載與寫入
+        await startStreamingDownload(writable, fileBase, totalChunks, totalSize);
 
         progress.style.width = "100%";
         percentage.textContent = "100%";
