@@ -23,5 +23,10 @@
         "name": "face_detection_yunet_2026may.onnx",
         "size": 214217,
         "chunks": 1
+    },
+    {
+        "name": "face_detection_yunet_2023mar.onnx",
+        "size": 214218,
+        "chunks": 1
     }
 ]
