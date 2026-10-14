@@ -38,5 +38,10 @@
         "name": "res10_300x300_ssd_iter_140000.caffemodel",
         "size": 10666211,
         "chunks": 1
+    },
+    {
+        "name": "gender_net.caffemodel",
+        "size": 45649168,
+        "chunks": 1
     }
 ]
