@@ -33,5 +33,10 @@
         "name": "deploy.prototxt",
         "size": 28104,
         "chunks": 1
+    },
+    {
+        "name": "res10_300x300_ssd_iter_140000.caffemodel",
+        "size": 10666211,
+        "chunks": 1
     }
 ]
