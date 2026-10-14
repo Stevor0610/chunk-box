@@ -43,5 +43,10 @@
         "name": "gender_net.caffemodel",
         "size": 45649168,
         "chunks": 1
+    },
+    {
+        "name": "genderage.onnx",
+        "size": 1322532,
+        "chunks": 1
     }
 ]
