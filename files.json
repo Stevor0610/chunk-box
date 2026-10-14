@@ -28,5 +28,10 @@
         "name": "face_detection_yunet_2023mar.onnx",
         "size": 214218,
         "chunks": 1
+    },
+    {
+        "name": "deploy.prototxt",
+        "size": 28104,
+        "chunks": 1
     }
 ]
