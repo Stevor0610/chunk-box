@@ -48,5 +48,10 @@
         "name": "genderage.onnx",
         "size": 1322532,
         "chunks": 1
+    },
+    {
+        "name": "shape_predictor_68_face_landmarks.dat.bz2",
+        "size": 64040097,
+        "chunks": 2
     }
 ]
