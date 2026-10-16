@@ -8,5 +8,10 @@
         "name": "resnet34-v2-7.onnx",
         "size": 221948,
         "chunks": 1
+    },
+    {
+        "name": "alpine-standard-3.24.2-x86_64.iso",
+        "size": 370147328,
+        "chunks": 18
     }
 ]
