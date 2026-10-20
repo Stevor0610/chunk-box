@@ -13,5 +13,10 @@
         "name": "alpine-standard-3.24.2-x86_64.iso",
         "size": 370147328,
         "chunks": 18
+    },
+    {
+        "name": "downloaded_file",
+        "size": 1525120,
+        "chunks": 1
     }
 ]
