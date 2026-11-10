@@ -18,5 +18,10 @@
         "name": "downloaded_file",
         "size": 1525120,
         "chunks": 1
+    },
+    {
+        "name": "chrome-win64.zip",
+        "size": 207073013,
+        "chunks": 10
     }
 ]
